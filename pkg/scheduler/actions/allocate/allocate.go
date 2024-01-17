@@ -17,17 +17,62 @@
 package allocate
 
 import (
-	"time"
+	// "time"
 
 	"k8s.io/klog/v2"
 
-	"volcano.sh/apis/pkg/apis/scheduling"
+	// disabling the following packages to make p3k8s work
+	// "volcano.sh/apis/pkg/apis/scheduling"
 	"volcano.sh/volcano/pkg/scheduler/api"
-	"volcano.sh/volcano/pkg/scheduler/conf"
+	// "volcano.sh/volcano/pkg/scheduler/conf"
 	"volcano.sh/volcano/pkg/scheduler/framework"
-	"volcano.sh/volcano/pkg/scheduler/metrics"
+	// "volcano.sh/volcano/pkg/scheduler/metrics"
 	"volcano.sh/volcano/pkg/scheduler/util"
+
+	
+	// packages needed to make p3k8s work
+	// Author: Tianya Chen
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+
+	"encoding/json"
+	"fmt"
+	"os"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
 )
+
+/****************   p3k8s specific strcuts  ********************/
+// Author: Tianya Chen
+type JobT struct {
+	JobID        int    `json:"jobID"`
+	JobType      string `json:"jobType"`
+	K            int    `json:"k"`
+	Duration     int    `json:"duration"`
+	SlowDuration int    `json:"slowDuration"`
+}
+
+type InputT struct {
+	RackCap              []int  `json:"rack_cap"`
+	NumLargeMachineRacks int    `json:"numLargeMachineRacks"`
+	Queue                []JobT `json:"queue"`
+	Machines             []int  `json:"machines"`
+}
+
+type OutputT struct {
+	JobID    int   `json:"jobID"`
+	Machines []int `json:"machines"`
+}
+
+type Message struct {
+	Input  InputT      `json:"input"`
+	Output interface{} `json:"output"`
+}
+
+/*****************   p3k8s specific strcuts above  ******************/
+
 
 type Action struct{}
 
@@ -286,3 +331,137 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 }
 
 func (alloc *Action) UnInitialize() {}
+
+
+/*********************** p3k8s specific functions *********************************/
+// Author: Tianya Chen
+
+// keep track of input and output in the previous allocation decision
+var prevInput InputT
+var prevOutput OutputT
+
+func recordDecision(input InputT, output OutputT, trace string) {
+	// Marshal policy input and output to json and write to file
+	var message Message
+	message.Input = input
+	if len(output.Machines) > 0 {
+		sort.Ints(output.Machines)
+		message.Output = output
+	}
+	// save only if input is different than the previous one
+	if !reflect.DeepEqual(input, prevInput) || !reflect.DeepEqual(output, prevOutput) {
+		jobsInfo := []int{}
+		for _, jq := range input.Queue {
+			jobsInfo = append(jobsInfo, jq.JobID)
+		}
+		sort.Ints(jobsInfo)
+		nodesInfo := input.Machines
+		sort.Ints(nodesInfo)
+		if len(output.Machines) > 0 {
+			klog.Infof("Policy scheduled JobID=%v to %v (Input queue: %v, nodes: %v)",
+				output.JobID, output.Machines, jobsInfo, nodesInfo)
+		} else {
+			klog.Infof("Policy could not schedule any job (Input queue: %v, nodes: %v)",
+				jobsInfo, nodesInfo)
+		}
+		b, _ := json.Marshal(message)
+		traceFile, _ := os.OpenFile(fmt.Sprintf("/tmp/trace-%s.json", trace), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		traceFile.Write(append(b, ','))
+		traceFile.Close()
+	} else {
+		klog.V(3).Infof("Same input, skip recording")
+	}
+	// remember input and output, to avoid saving identical scheduling decisions
+	prevInput = input
+	prevOutput = output
+}
+
+func addJobProperty(job *api.JobInfo) *api.JobInfo {
+	for _, task := range job.TaskStatusIndex[api.Pending] {
+		//		jobID, _ := strconv.ParseInt(job.Name[3 :], 10, 64)
+		jobID, _ := strconv.ParseInt(strings.Split(job.Name, "-")[1], 10, 64)
+		job.ID = int(jobID)
+		job.Trace = task.Pod.ObjectMeta.Labels["trace"]
+		job.Type = task.Pod.ObjectMeta.Labels["type"]
+		fastDuration, _ := strconv.ParseInt(task.Pod.ObjectMeta.Labels["FastDuration"], 10, 64)
+		job.FastDuration = int(fastDuration)
+		slowDuration, _ := strconv.ParseInt(task.Pod.ObjectMeta.Labels["SlowDuration"], 10, 64)
+		job.SlowDuration = int(slowDuration)
+		break
+	}
+	job.CreationTime = metav1.Now()
+	for _, task := range job.TaskStatusIndex[api.Pending] {
+		if task.Pod.ObjectMeta.CreationTimestamp.Before(&job.CreationTime) {
+			job.CreationTime = task.Pod.ObjectMeta.CreationTimestamp
+		}
+	}
+	return job
+}
+
+func addNodeProperty(node *api.NodeInfo) *api.NodeInfo {
+	nodeID, _ := strconv.ParseInt(node.Node.ObjectMeta.Name[3:], 10, 64)
+	node.ID = int(nodeID)
+	if rack, found := node.Node.ObjectMeta.Labels["Rack"]; found {
+		rackID, _ := strconv.ParseInt(rack, 10, 64)
+		node.Rack = int(rackID)
+	} else {
+		node.Rack = -1
+	}
+	if gpu, found := node.Node.ObjectMeta.Labels["GPU"]; found && gpu == "true" {
+		node.GPU = true
+	} else {
+		node.GPU = false
+	}
+	return node
+}
+
+func getOneTask(job *api.JobInfo) *api.TaskInfo {
+	for _, t := range job.TaskStatusIndex[api.Pending] {
+		return t
+	}
+	return nil
+}
+
+func prepareInput(jobs []*api.JobInfo, nodes []*api.NodeInfo, nodesAvailable map[string]*api.NodeInfo) InputT {
+	var input InputT
+
+	// Collect rack capacities and number of GPU racks from node info
+	rackCap := make(map[int]int)
+	for _, node := range nodes {
+		if node.Rack >= 0 {
+			if _, found := rackCap[node.Rack]; found {
+				rackCap[node.Rack] = rackCap[node.Rack] + 1
+			} else {
+				rackCap[node.Rack] = 1
+			}
+			if node.GPU {
+				if node.Rack > input.NumLargeMachineRacks {
+					input.NumLargeMachineRacks = node.Rack
+				}
+			}
+		}
+	}
+	for rackID := 1; rackID <= len(rackCap); rackID++ {
+		input.RackCap = append(input.RackCap, rackCap[rackID])
+	}
+
+	// Collect job info
+	for _, job := range jobs {
+		var queueJob JobT
+		queueJob.JobID = job.ID
+		queueJob.K = int(job.MinAvailable)
+		queueJob.JobType = job.Type
+		queueJob.Duration = job.FastDuration
+		queueJob.SlowDuration = job.SlowDuration
+		input.Queue = append(input.Queue, queueJob)
+	}
+
+	// Collect node info
+	for _, node := range nodesAvailable {
+		input.Machines = append(input.Machines, node.ID)
+	}
+
+	sort.Ints(input.Machines)
+
+	return input
+}

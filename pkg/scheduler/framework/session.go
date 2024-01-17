@@ -403,7 +403,10 @@ func (ssn *Session) Allocate(task *api.TaskInfo, nodeInfo *api.NodeInfo) (err er
 			}
 		}
 	} else {
-		ssn.cache.RevertVolumes(task, podVolumes)
+		// p3k8s changes
+		// Author: Baljit Singh
+		fmt.Printf("entering revert volumes through jobready with task %v\n", task.Name)
+		// ssn.cache.RevertVolumes(task, podVolumes)
 	}
 
 	return nil

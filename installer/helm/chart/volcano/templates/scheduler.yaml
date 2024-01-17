@@ -27,7 +27,7 @@ rules:
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: ["batch.volcano.sh"]
     resources: ["jobs"]
-    verbs: ["get", "list", "watch", "update", "delete"]
+    verbs: ["get", "list", "watch", "update", "delete", "patch"]
   - apiGroups: ["batch.volcano.sh"]
     resources: ["jobs/status"]
     verbs: ["update", "patch"]
@@ -145,7 +145,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Release.Name }}-scheduler
-          image: {{.Values.basic.scheduler_image_name}}:{{.Values.basic.image_tag_version}}
+          image: sailimages/vc-sail-scheduler:v3
           {{- if .Values.custom.scheduler_resources }}
           resources:
           {{- toYaml .Values.custom.scheduler_resources | nindent 12 }}
@@ -161,7 +161,7 @@ spec:
             {{- end }}
             - -v=3
             - 2>&1
-          imagePullPolicy: {{ .Values.basic.image_pull_policy }}
+          imagePullPolicy: Never
           volumeMounts:
             - name: scheduler-config
               mountPath: /volcano.scheduler

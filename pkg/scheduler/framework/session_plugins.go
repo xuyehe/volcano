@@ -511,7 +511,7 @@ func (ssn *Session) JobOrderFn(l, r interface{}) bool {
 			}
 		}
 	}
-/*
+*/
 	// If no job order funcs, order job by CreationTimestamp first, then by UID.
 	lv := l.(*api.JobInfo)
 	rv := r.(*api.JobInfo)

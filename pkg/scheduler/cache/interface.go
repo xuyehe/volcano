@@ -51,7 +51,7 @@ type Cache interface {
 
 	// RecordJobStatusEvent records related events according to job status.
 	// Deprecated: remove it after removed PDB support.
-	RecordJobStatusEvent(job *api.JobInfo)
+	RecordJobStatusEvent(job *api.JobInfo, updatePG bool)
 
 	// UpdateJobStatus puts job in backlog for a while.
 	UpdateJobStatus(job *api.JobInfo, updatePG bool) (*api.JobInfo, error)
@@ -87,6 +87,11 @@ type Cache interface {
 
 	// EventRecorder returns the event recorder
 	EventRecorder() record.EventRecorder
+
+	// cmu719 p3k8s specific functions
+	// Author: Tianya Chen
+	LoadSchedulerConf(path string) (map[string]string, error)
+	UpdateScheduledTime(task *api.TaskInfo) error
 }
 
 // VolumeBinder interface for allocate and bind volumes
@@ -99,7 +104,7 @@ type VolumeBinder interface {
 
 // Binder interface for binding task and hostname
 type Binder interface {
-	Bind(kubeClient *kubernetes.Clientset, tasks []*api.TaskInfo) ([]*api.TaskInfo, error)
+	Bind(kubeClient kubernetes.Interface, tasks []*api.TaskInfo) ([]*api.TaskInfo, error)
 }
 
 // Evictor interface for evict pods

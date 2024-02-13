@@ -55,6 +55,7 @@ function install-volcano {
 
   echo "Install volcano chart with crd version $crd_version"
   helm install ${CLUSTER_NAME} installer/helm/chart/volcano --namespace volcano-system --kubeconfig ${KUBECONFIG} \
+    --set basic.image_pull_policy=IfNotPresent \
     --set basic.image_tag_version=${TAG} \
     --set basic.scheduler_config_file=config/volcano-scheduler-ci.conf \
     --set basic.crd_version=${crd_version} \
@@ -120,7 +121,7 @@ install-volcano
 # Run e2e test
 cd ${VK_ROOT}
 
-GO111MODULE=off go get github.com/onsi/ginkgo/ginkgo
+install-ginkgo-if-not-exist
 
 case ${E2E_TYPE} in
 "ALL")

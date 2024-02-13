@@ -21,15 +21,18 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"github.com/elastic/go-elasticsearch/v7"
+	"errors"
 	"net/http"
+	"time"
+
+	"github.com/elastic/go-elasticsearch/v7"
 )
 
 const (
 	// esHostNameField is the field name of host name in the document
 	esHostNameField = "host.hostname"
-	// esCpuUsageField is the field name of cpu usage in the document
-	esCpuUsageField = "host.cpu.usage"
+	// esCPUUsageField is the field name of cpu usage in the document
+	esCPUUsageField = "host.cpu.usage"
 	// esMemUsageField is the field name of mem usage in the document
 	esMemUsageField = "system.memory.actual.used.pct"
 )
@@ -41,7 +44,12 @@ type ElasticsearchMetricsClient struct {
 	hostnameFieldName string
 }
 
-func NewElasticsearchMetricsClient(address string, conf map[string]string) (*ElasticsearchMetricsClient, error) {
+func NewElasticsearchMetricsClient(conf map[string]string) (*ElasticsearchMetricsClient, error) {
+	address := conf["address"]
+	if len(address) == 0 {
+		return nil, errors.New("metrics address is empty")
+	}
+
 	e := &ElasticsearchMetricsClient{address: address}
 	indexName := conf["elasticsearch.index"]
 	if len(indexName) == 0 {
@@ -73,7 +81,18 @@ func NewElasticsearchMetricsClient(address string, conf map[string]string) (*Ela
 	return e, nil
 }
 
-func (e *ElasticsearchMetricsClient) NodeMetricsAvg(ctx context.Context, nodeName string, period string) (*NodeMetrics, error) {
+func (e *ElasticsearchMetricsClient) NodesMetricsAvg(ctx context.Context, nodeMetricsMap map[string]*NodeMetrics) error {
+	for nodeName := range nodeMetricsMap {
+		nodeMetrics, err := e.NodeMetricsAvg(ctx, nodeName)
+		if err != nil {
+			return err
+		}
+		nodeMetricsMap[nodeName] = nodeMetrics
+	}
+	return nil
+}
+
+func (e *ElasticsearchMetricsClient) NodeMetricsAvg(ctx context.Context, nodeName string) (*NodeMetrics, error) {
 	nodeMetrics := &NodeMetrics{}
 	var buf bytes.Buffer
 	query := map[string]interface{}{
@@ -84,7 +103,7 @@ func (e *ElasticsearchMetricsClient) NodeMetricsAvg(ctx context.Context, nodeNam
 					{
 						"range": map[string]interface{}{
 							"@timestamp": map[string]interface{}{
-								"gte": "now-" + period,
+								"gte": "now-" + NODE_METRICS_PERIOD,
 								"lt":  "now",
 							},
 						},
@@ -100,7 +119,7 @@ func (e *ElasticsearchMetricsClient) NodeMetricsAvg(ctx context.Context, nodeNam
 		"aggs": map[string]interface{}{
 			"cpu": map[string]interface{}{
 				"avg": map[string]interface{}{
-					"field": esCpuUsageField,
+					"field": esCPUUsageField,
 				},
 			},
 			"mem": map[string]interface{}{
@@ -124,7 +143,7 @@ func (e *ElasticsearchMetricsClient) NodeMetricsAvg(ctx context.Context, nodeNam
 	defer res.Body.Close()
 	var r struct {
 		Aggregations struct {
-			Cpu struct {
+			CPU struct {
 				Value float64 `json:"value"`
 			}
 			Mem struct {
@@ -135,7 +154,9 @@ func (e *ElasticsearchMetricsClient) NodeMetricsAvg(ctx context.Context, nodeNam
 	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
 		return nil, err
 	}
-	nodeMetrics.Cpu = r.Aggregations.Cpu.Value
-	nodeMetrics.Memory = r.Aggregations.Mem.Value
+	// The data obtained from Elasticsearch is in decimals and needs to be multiplied by 100.
+	nodeMetrics.CPU = r.Aggregations.CPU.Value * 100
+	nodeMetrics.Memory = r.Aggregations.Mem.Value * 100
+	nodeMetrics.MetricsTime = time.Now()
 	return nodeMetrics, nil
 }

@@ -18,6 +18,7 @@ package gpushare
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
@@ -25,6 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+
+	"volcano.sh/volcano/pkg/scheduler/api/devices"
 	"volcano.sh/volcano/pkg/scheduler/plugins/util/nodelock"
 )
 
@@ -93,7 +96,7 @@ func (gs *GPUDevices) GetIgnoredDevices() []string {
 	return []string{""}
 }
 
-// AddGPUResource adds the pod to GPU pool if it is assigned
+// AddResource adds the pod to GPU pool if it is assigned
 func (gs *GPUDevices) AddResource(pod *v1.Pod) {
 	gpuRes := getGPUMemoryOfPod(pod)
 	if gpuRes > 0 {
@@ -106,7 +109,7 @@ func (gs *GPUDevices) AddResource(pod *v1.Pod) {
 	}
 }
 
-// SubGPUResource frees the gpu hold by the pod
+// SubResource frees the gpu hold by the pod
 func (gs *GPUDevices) SubResource(pod *v1.Pod) {
 	gpuRes := getGPUMemoryOfPod(pod)
 	if gpuRes > 0 {
@@ -133,7 +136,6 @@ func (gs *GPUDevices) Release(kubeClient kubernetes.Interface, pod *v1.Pod) erro
 	_, err := kubeClient.CoreV1().Pods(pod.Namespace).Patch(context.TODO(), pod.Name, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		return errors.Errorf("patch pod %s failed with patch %s: %v", pod.Name, patch, err)
-
 	}
 
 	for _, id := range ids {
@@ -146,24 +148,24 @@ func (gs *GPUDevices) Release(kubeClient kubernetes.Interface, pod *v1.Pod) erro
 	return nil
 }
 
-func (gs *GPUDevices) FilterNode(pod *v1.Pod) (bool, error) {
+func (gs *GPUDevices) FilterNode(pod *v1.Pod) (int, string, error) {
 	klog.V(4).Infoln("DeviceSharing:Into FitInPod", pod.Name)
 	if GpuSharingEnable {
 		fit, err := checkNodeGPUSharingPredicate(pod, gs)
-		if err != nil {
+		if err != nil || !fit {
 			klog.Errorln("deviceSharing err=", err.Error())
-			return fit, err
+			return devices.Unschedulable, fmt.Sprintf("GpuShare %s", err.Error()), err
 		}
 	}
 	if GpuNumberEnable {
 		fit, err := checkNodeGPUNumberPredicate(pod, gs)
-		if err != nil {
+		if err != nil || !fit {
 			klog.Errorln("deviceSharing err=", err.Error())
-			return fit, err
+			return devices.Unschedulable, fmt.Sprintf("GpuNumber %s", err.Error()), err
 		}
 	}
 	klog.V(4).Infoln("DeviceSharing:FitInPod successed")
-	return true, nil
+	return devices.Success, "", nil
 }
 
 func (gs *GPUDevices) GetStatus() string {
@@ -189,7 +191,6 @@ func (gs *GPUDevices) Allocate(kubeClient kubernetes.Interface, pod *v1.Pod) err
 		pod, err := kubeClient.CoreV1().Pods(pod.Namespace).Patch(context.TODO(), pod.Name, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})
 		if err != nil {
 			return errors.Errorf("patch pod %s failed with patch %s: %v", pod.Name, patch, err)
-
 		}
 		dev, ok := gs.Device[id]
 		if !ok {
@@ -202,7 +203,6 @@ func (gs *GPUDevices) Allocate(kubeClient kubernetes.Interface, pod *v1.Pod) err
 		ids := predicateGPUbyNumber(pod, gs)
 		if len(ids) == 0 {
 			return errors.Errorf("the node %s can't place the pod %s in ns %s", pod.Spec.NodeName, pod.Name, pod.Namespace)
-
 		}
 		patch := AddGPUIndexPatch(ids)
 		pod, err := kubeClient.CoreV1().Pods(pod.Namespace).Patch(context.TODO(), pod.Name, types.JSONPatchType, []byte(patch), metav1.PatchOptions{})

@@ -24,6 +24,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"volcano.sh/volcano/pkg/scheduler/api/devices/nvidia/gpushare"
 )
 
@@ -40,18 +41,18 @@ func TestGetPodResourceRequest(t *testing.T) {
 					Containers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("1000m", "1G"),
+								Requests: BuildResourceList("1000m", "1G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
 				},
 			},
-			expectedResource: NewResource(buildResourceList("3000m", "2G")),
+			expectedResource: buildResource("3000m", "2G", map[string]string{"pods": "1"}, 0),
 		},
 		{
 			name: "get resource for pod with init containers",
@@ -60,30 +61,30 @@ func TestGetPodResourceRequest(t *testing.T) {
 					InitContainers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "5G"),
+								Requests: BuildResourceList("2000m", "5G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
 					Containers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("1000m", "1G"),
+								Requests: BuildResourceList("1000m", "1G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
 				},
 			},
-			expectedResource: NewResource(buildResourceList("3000m", "5G")),
+			expectedResource: buildResource("3000m", "5G", map[string]string{"pods": "1"}, 0),
 		},
 	}
 
@@ -109,18 +110,18 @@ func TestGetPodResourceWithoutInitContainers(t *testing.T) {
 					Containers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("1000m", "1G"),
+								Requests: BuildResourceList("1000m", "1G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
 				},
 			},
-			expectedResource: NewResource(buildResourceList("3000m", "2G")),
+			expectedResource: NewResource(BuildResourceList("3000m", "2G")),
 		},
 		{
 			name: "get resource for pod with init containers",
@@ -129,30 +130,30 @@ func TestGetPodResourceWithoutInitContainers(t *testing.T) {
 					InitContainers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "5G"),
+								Requests: BuildResourceList("2000m", "5G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
 					Containers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("1000m", "1G"),
+								Requests: BuildResourceList("1000m", "1G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
 				},
 			},
-			expectedResource: NewResource(buildResourceList("3000m", "2G")),
+			expectedResource: NewResource(BuildResourceList("3000m", "2G")),
 		},
 		{
 			name: "get resource for pod with overhead",
@@ -161,12 +162,12 @@ func TestGetPodResourceWithoutInitContainers(t *testing.T) {
 					Containers: []v1.Container{
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("1000m", "1G"),
+								Requests: BuildResourceList("1000m", "1G"),
 							},
 						},
 						{
 							Resources: v1.ResourceRequirements{
-								Requests: buildResourceList("2000m", "1G"),
+								Requests: BuildResourceList("2000m", "1G"),
 							},
 						},
 					},
@@ -176,7 +177,7 @@ func TestGetPodResourceWithoutInitContainers(t *testing.T) {
 					},
 				},
 			},
-			expectedResource: NewResource(buildResourceList("3500m", "3G")),
+			expectedResource: NewResource(BuildResourceList("3500m", "3G")),
 		},
 	}
 

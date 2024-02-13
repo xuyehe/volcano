@@ -121,7 +121,8 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 			if attr.capability == nil {
 				attr.realCapability = realCapability
 			} else {
-				attr.realCapability = helpers.Min(realCapability, attr.capability)
+				realCapability.MinDimensionResource(attr.capability, api.Infinity)
+				attr.realCapability = realCapability
 			}
 			pp.queueOpts[job.Queue] = attr
 			klog.V(4).Infof("Added Queue <%s> attributes.", job.Queue)
@@ -242,7 +243,7 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		remaining.Sub(increasedDeserved).Add(decreasedDeserved)
 		klog.V(4).Infof("Remaining resource is  <%s>", remaining)
 		if remaining.IsEmpty() || reflect.DeepEqual(remaining, oldRemaining) {
-			klog.V(4).Infof("Exiting when remaining is empty or no queue has more reosurce request:  <%v>", remaining)
+			klog.V(4).Infof("Exiting when remaining is empty or no queue has more resource request:  <%v>", remaining)
 			break
 		}
 	}
@@ -337,7 +338,16 @@ func (pp *proportionPlugin) OnSessionOpen(ssn *framework.Session) {
 		klog.V(5).Infof("job %s min resource <%s>, queue %s capability <%s> allocated <%s> inqueue <%s> elastic <%s>",
 			job.Name, minReq.String(), queue.Name, attr.realCapability.String(), attr.allocated.String(), attr.inqueue.String(), attr.elastic.String())
 		// The queue resource quota limit has not reached
-		inqueue := minReq.Add(attr.allocated).Add(attr.inqueue).Sub(attr.elastic).LessEqual(attr.realCapability, api.Infinity)
+		r := minReq.Add(attr.allocated).Add(attr.inqueue).Sub(attr.elastic)
+		rr := attr.realCapability.Clone()
+
+		for name := range rr.ScalarResources {
+			if _, ok := r.ScalarResources[name]; !ok {
+				delete(rr.ScalarResources, name)
+			}
+		}
+
+		inqueue := r.LessEqual(rr, api.Infinity)
 		klog.V(5).Infof("job %s inqueue %v", job.Name, inqueue)
 		if inqueue {
 			attr.inqueue.Add(job.GetMinResources())

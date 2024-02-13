@@ -3,6 +3,7 @@ package util
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -13,7 +14,7 @@ import (
 )
 
 type PredicateHelper interface {
-	PredicateNodes(task *api.TaskInfo, nodes []*api.NodeInfo, fn api.PredicateFn) ([]*api.NodeInfo, *api.FitErrors)
+	PredicateNodes(task *api.TaskInfo, nodes []*api.NodeInfo, fn api.PredicateFn, enableErrorCache bool) ([]*api.NodeInfo, *api.FitErrors)
 }
 
 type predicateHelper struct {
@@ -21,7 +22,7 @@ type predicateHelper struct {
 }
 
 // PredicateNodes returns the specified number of nodes that fit a task
-func (ph *predicateHelper) PredicateNodes(task *api.TaskInfo, nodes []*api.NodeInfo, fn api.PredicateFn) ([]*api.NodeInfo, *api.FitErrors) {
+func (ph *predicateHelper) PredicateNodes(task *api.TaskInfo, nodes []*api.NodeInfo, fn api.PredicateFn, enableErrorCache bool) ([]*api.NodeInfo, *api.FitErrors) {
 	var errorLock sync.RWMutex
 	fe := api.NewFitErrors()
 
@@ -56,7 +57,7 @@ func (ph *predicateHelper) PredicateNodes(task *api.TaskInfo, nodes []*api.NodeI
 
 		// Check if the task had "predicate" failure before.
 		// And then check if the task failed to predict on this node before.
-		if taskFailedBefore {
+		if enableErrorCache && taskFailedBefore {
 			errorLock.RLock()
 			errC, ok := nodeErrorCache[node.Name]
 			errorLock.RUnlock()
@@ -70,9 +71,8 @@ func (ph *predicateHelper) PredicateNodes(task *api.TaskInfo, nodes []*api.NodeI
 		}
 
 		// TODO (k82cn): Enable eCache for performance improvement.
-		if err := fn(task, node); err != nil {
-			klog.V(3).Infof("Predicates failed for task <%s/%s> on node <%s>: %v",
-				task.Namespace, task.Name, node.Name, err)
+		if _, err := fn(task, node); err != nil {
+			klog.V(3).Infof("Predicates failed: %v", err)
 			errorLock.Lock()
 			nodeErrorCache[node.Name] = err
 			ph.taskPredicateErrorCache[taskGroupid] = nodeErrorCache
@@ -106,4 +106,72 @@ func taskGroupID(task *api.TaskInfo) string {
 
 func NewPredicateHelper() PredicateHelper {
 	return &predicateHelper{taskPredicateErrorCache: map[string]map[string]error{}}
+}
+
+type StatusSets []*api.Status
+
+func (s StatusSets) ContainsUnschedulable() bool {
+	for _, status := range s {
+		if status == nil {
+			continue
+		}
+		if status.Code == api.Unschedulable {
+			return true
+		}
+	}
+	return false
+}
+
+func (s StatusSets) ContainsUnschedulableAndUnresolvable() bool {
+	for _, status := range s {
+		if status == nil {
+			continue
+		}
+		if status.Code == api.UnschedulableAndUnresolvable {
+			return true
+		}
+	}
+	return false
+}
+
+func (s StatusSets) ContainsErrorSkipOrWait() bool {
+	for _, status := range s {
+		if status == nil {
+			continue
+		}
+		if status.Code == api.Error || status.Code == api.Skip || status.Code == api.Wait {
+			return true
+		}
+	}
+	return false
+}
+
+// Message return the message generated from StatusSets
+func (s StatusSets) Message() string {
+	if s == nil {
+		return ""
+	}
+	all := make([]string, 0, len(s))
+	for _, status := range s {
+		if status.Reason == "" {
+			continue
+		}
+		all = append(all, status.Reason)
+	}
+	return strings.Join(all, ",")
+}
+
+// Reasons return the reasons list
+func (s StatusSets) Reasons() []string {
+	if s == nil {
+		return nil
+	}
+	all := make([]string, 0, len(s))
+	for _, status := range s {
+		if status.Reason == "" {
+			continue
+		}
+		all = append(all, status.Reason)
+	}
+	return all
 }

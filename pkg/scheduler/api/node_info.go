@@ -19,13 +19,16 @@ package api
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	k8sframework "k8s.io/kubernetes/pkg/scheduler/framework"
 
 	"volcano.sh/apis/pkg/apis/scheduling/v1beta1"
+
 	"volcano.sh/volcano/pkg/scheduler/api/devices/nvidia/gpushare"
+	"volcano.sh/volcano/pkg/scheduler/api/devices/nvidia/vgpu"
 )
 
 type AllocateFailError struct {
@@ -85,6 +88,12 @@ type NodeInfo struct {
 	// checking an image's existence and advanced usage (e.g., image locality scheduling policy) based on the image
 	// state information.
 	ImageStates map[string]*k8sframework.ImageStateSummary
+
+	// CMU719 p3 custom properties
+	// Author: Tianya Chen
+	ID int
+	Rack int
+	GPU bool
 }
 
 // FutureIdle returns resources that will be idle in the future:
@@ -107,6 +116,7 @@ type NodeState struct {
 
 // NodeUsage defines the real load usage of node
 type NodeUsage struct {
+	MetricsTime time.Time
 	CPUUsageAvg map[string]float64
 	MEMUsageAvg map[string]float64
 }
@@ -116,6 +126,7 @@ func (nu *NodeUsage) DeepCopy() *NodeUsage {
 		CPUUsageAvg: make(map[string]float64),
 		MEMUsageAvg: make(map[string]float64),
 	}
+	newUsage.MetricsTime = nu.MetricsTime
 	for k, v := range nu.CPUUsageAvg {
 		newUsage.CPUUsageAvg[k] = v
 	}
@@ -211,7 +222,8 @@ func (ni *NodeInfo) Clone() *NodeInfo {
 
 	klog.V(5).Infof("imageStates is %v", res.ImageStates)
 
-	res.Others = ni.Others
+	res.Others = ni.CloneOthers()
+	res.ImageStates = ni.CloneImageSummary()
 	return res
 }
 
@@ -288,12 +300,8 @@ func (ni *NodeInfo) setNodeState(node *v1.Node) {
 	}
 
 	// set NodeState according to resources
-	if !ni.Used.LessEqual(ni.Allocatable, Zero) {
-		ni.State = NodeState{
-			Phase:  NotReady,
-			Reason: "OutOfSync",
-		}
-		return
+	if ok, resources := ni.Used.LessEqualWithResourcesName(ni.Allocatable, Zero); !ok {
+		klog.ErrorS(nil, "Node out of sync", "name", ni.Name, "resources", resources)
 	}
 
 	// If node not ready, e.g. power off
@@ -345,7 +353,9 @@ func (ni *NodeInfo) SetNode(node *v1.Node) {
 func (ni *NodeInfo) setNodeOthersResource(node *v1.Node) {
 	IgnoredDevicesList = []string{}
 	ni.Others[GPUSharingDevice] = gpushare.NewGPUDevices(ni.Name, node)
+	ni.Others[vgpu.DeviceName] = vgpu.NewGPUDevices(ni.Name, node)
 	IgnoredDevicesList = append(IgnoredDevicesList, ni.Others[GPUSharingDevice].(Devices).GetIgnoredDevices()...)
+	IgnoredDevicesList = append(IgnoredDevicesList, ni.Others[vgpu.DeviceName].(Devices).GetIgnoredDevices()...)
 }
 
 // setNode sets kubernetes node object to nodeInfo object without assertion
@@ -367,30 +377,30 @@ func (ni *NodeInfo) setNode(node *v1.Node) {
 	for _, ti := range ni.Tasks {
 		switch ti.Status {
 		case Releasing:
-			ni.Idle.sub(ti.Resreq) // sub without assertion
+			ni.allocateIdleResource(ti)
 			ni.Releasing.Add(ti.Resreq)
 			ni.Used.Add(ti.Resreq)
 			ni.addResource(ti.Pod)
 		case Pipelined:
 			ni.Pipelined.Add(ti.Resreq)
 		default:
-			ni.Idle.sub(ti.Resreq) // sub without assertion
+			ni.allocateIdleResource(ti)
 			ni.Used.Add(ti.Resreq)
 			ni.addResource(ti.Pod)
 		}
 	}
 }
 
-func (ni *NodeInfo) allocateIdleResource(ti *TaskInfo) error {
-	if ti.Resreq.LessEqual(ni.Idle, Zero) {
-		ni.Idle.Sub(ti.Resreq)
-		return nil
+func (ni *NodeInfo) allocateIdleResource(ti *TaskInfo) {
+	ok, resources := ti.Resreq.LessEqualWithResourcesName(ni.Idle, Zero)
+	if ok {
+		ni.Idle.sub(ti.Resreq)
+		return
 	}
 
-	return &AllocateFailError{Reason: fmt.Sprintf(
-		"cannot allocate resource, <%s> idle: %s <%s/%s> req: %s",
-		ni.Name, ni.Idle.String(), ti.Namespace, ti.Name, ti.Resreq.String(),
-	)}
+	ni.Idle.sub(ti.Resreq)
+	klog.ErrorS(nil, "Idle resources turn into negative after allocated",
+		"nodeName", ni.Name, "task", klog.KObj(ti.Pod), "resources", resources, "idle", ni.Idle.String(), "req", ti.Resreq.String())
 }
 
 // AddTask is used to add a task in nodeInfo object
@@ -415,18 +425,22 @@ func (ni *NodeInfo) AddTask(task *TaskInfo) error {
 	if ni.Node != nil {
 		switch ti.Status {
 		case Releasing:
-			if err := ni.allocateIdleResource(ti); err != nil {
-				return err
-			}
+			ni.allocateIdleResource(ti)
 			ni.Releasing.Add(ti.Resreq)
 			ni.Used.Add(ti.Resreq)
 			ni.addResource(ti.Pod)
 		case Pipelined:
 			ni.Pipelined.Add(ti.Resreq)
-		default:
-			if err := ni.allocateIdleResource(ti); err != nil {
-				return err
+		case Binding:
+			// When task in Binding status, it will bind to node, we should double-check whether idle resources are enough to put task before bind to apiserver.
+			if ok, resNames := ti.Resreq.LessEqualWithResourcesName(ni.Idle, Zero); !ok {
+				return fmt.Errorf("node %s resources %v are not enough to put task <%s/%s>, idle: %s, req: %s", ni.Name, resNames, ti.Namespace, ti.Name, ni.Idle.String(), ti.Resreq.String())
 			}
+			ni.allocateIdleResource(ti)
+			ni.Used.Add(ti.Resreq)
+			ni.addResource(ti.Pod)
+		default:
+			ni.allocateIdleResource(ti)
 			ni.Used.Add(ti.Resreq)
 			ni.addResource(ti.Pod)
 		}
@@ -485,11 +499,13 @@ func (ni *NodeInfo) RemoveTask(ti *TaskInfo) error {
 // addResource is used to add sharable devices
 func (ni *NodeInfo) addResource(pod *v1.Pod) {
 	ni.Others[GPUSharingDevice].(Devices).AddResource(pod)
+	ni.Others[vgpu.DeviceName].(Devices).AddResource(pod)
 }
 
 // subResource is used to substract sharable devices
 func (ni *NodeInfo) subResource(pod *v1.Pod) {
 	ni.Others[GPUSharingDevice].(Devices).SubResource(pod)
+	ni.Others[vgpu.DeviceName].(Devices).SubResource(pod)
 }
 
 // UpdateTask is used to update a task in nodeInfo object.
@@ -533,8 +549,8 @@ func (ni *NodeInfo) Pods() (pods []*v1.Pod) {
 	return
 }
 
-// Clone Image State
-func (ni *NodeInfo) CloneImageSumary() map[string]*k8sframework.ImageStateSummary {
+// CloneImageSummary Clone Image State
+func (ni *NodeInfo) CloneImageSummary() map[string]*k8sframework.ImageStateSummary {
 	nodeImageStates := make(map[string]*k8sframework.ImageStateSummary)
 	for imageName, summary := range ni.ImageStates {
 		newImageSummary := &k8sframework.ImageStateSummary{
@@ -546,6 +562,16 @@ func (ni *NodeInfo) CloneImageSumary() map[string]*k8sframework.ImageStateSummar
 	return nodeImageStates
 }
 
+// CloneOthers clone other map resources
+func (ni *NodeInfo) CloneOthers() map[string]interface{} {
+	others := make(map[string]interface{})
+	for k, v := range ni.Others {
+		others[k] = v
+	}
+	return others
+}
+
+// Clone clone csi node status info
 func (cs *CSINodeStatusInfo) Clone() *CSINodeStatusInfo {
 	newcs := &CSINodeStatusInfo{
 		CSINodeName:  cs.CSINodeName,

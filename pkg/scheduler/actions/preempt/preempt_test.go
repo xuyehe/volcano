@@ -17,9 +17,11 @@ limitations under the License.
 package preempt
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	v1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,7 +29,7 @@ import (
 
 	schedulingv1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 	"volcano.sh/volcano/cmd/scheduler/app/options"
-	"volcano.sh/volcano/pkg/kube"
+	"volcano.sh/volcano/pkg/scheduler/api"
 	"volcano.sh/volcano/pkg/scheduler/cache"
 	"volcano.sh/volcano/pkg/scheduler/conf"
 	"volcano.sh/volcano/pkg/scheduler/framework"
@@ -37,6 +39,12 @@ import (
 )
 
 func TestPreempt(t *testing.T) {
+	var tmp *cache.SchedulerCache
+	patchUpdateQueueStatus := gomonkey.ApplyMethod(reflect.TypeOf(tmp), "UpdateQueueStatus", func(scCache *cache.SchedulerCache, queue *api.QueueInfo) error {
+		return nil
+	})
+	defer patchUpdateQueueStatus.Reset()
+
 	framework.RegisterPluginBuilder("conformance", conformance.New)
 	framework.RegisterPluginBuilder("gang", gang.New)
 	options.ServerOpts = &options.ServerOption{
@@ -75,13 +83,13 @@ func TestPreempt(t *testing.T) {
 				},
 			},
 			pods: []*v1.Pod{
-				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptor1", "", v1.PodPending, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptor1", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
 			},
 			// If there are enough idle resources on the node, then there is no need to preempt anything.
 			nodes: []*v1.Node{
-				util.BuildNode("n1", util.BuildResourceList("10", "10G"), make(map[string]string)),
+				util.BuildNode("n1", api.BuildResourceList("10", "10G", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
 			},
 			queues: []*schedulingv1beta1.Queue{
 				{
@@ -133,14 +141,14 @@ func TestPreempt(t *testing.T) {
 			},
 			// Both pg1 and pg2 jobs are pipelined, because enough pods are already running.
 			pods: []*v1.Pod{
-				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptee3", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptor2", "", v1.PodPending, util.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee3", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptor2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
 			},
 			// All resources on the node will be in use.
 			nodes: []*v1.Node{
-				util.BuildNode("n1", util.BuildResourceList("3", "3G"), make(map[string]string)),
+				util.BuildNode("n1", api.BuildResourceList("3", "3G", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
 			},
 			queues: []*schedulingv1beta1.Queue{
 				{
@@ -193,13 +201,13 @@ func TestPreempt(t *testing.T) {
 				},
 			},
 			pods: []*v1.Pod{
-				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
-				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptor1", "", v1.PodPending, util.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptor2", "", v1.PodPending, util.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
+				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptor1", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptor2", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
 			},
 			nodes: []*v1.Node{
-				util.BuildNode("n1", util.BuildResourceList("2", "2G"), make(map[string]string)),
+				util.BuildNode("n1", api.BuildResourceList("2", "2G", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
 			},
 			queues: []*schedulingv1beta1.Queue{
 				{
@@ -254,13 +262,13 @@ func TestPreempt(t *testing.T) {
 			// There are 3 cpus and 3G of memory idle and 3 tasks running each consuming 1 cpu and 1G of memory.
 			// Big task requiring 5 cpus and 5G of memory should preempt 2 of 3 running tasks to fit into the node.
 			pods: []*v1.Pod{
-				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
-				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
-				util.BuildPod("c1", "preemptee3", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
-				util.BuildPod("c1", "preemptor1", "", v1.PodPending, util.BuildResourceList("5", "5G"), "pg2", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
+				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
+				util.BuildPod("c1", "preemptee3", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
+				util.BuildPod("c1", "preemptor1", "", v1.PodPending, api.BuildResourceList("5", "5G"), "pg2", make(map[string]string), make(map[string]string)),
 			},
 			nodes: []*v1.Node{
-				util.BuildNode("n1", util.BuildResourceList("6", "6G"), make(map[string]string)),
+				util.BuildNode("n1", api.BuildResourceList("6", "6G", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
 			},
 			queues: []*schedulingv1beta1.Queue{
 				{
@@ -287,22 +295,18 @@ func TestPreempt(t *testing.T) {
 			evictor := &util.FakeEvictor{
 				Channel: make(chan string),
 			}
+			schedulerCache := &cache.SchedulerCache{
+				Nodes:           make(map[string]*api.NodeInfo),
+				Jobs:            make(map[api.JobID]*api.JobInfo),
+				Queues:          make(map[api.QueueID]*api.QueueInfo),
+				Binder:          binder,
+				Evictor:         evictor,
+				StatusUpdater:   &util.FakeStatusUpdater{},
+				VolumeBinder:    &util.FakeVolumeBinder{},
+				PriorityClasses: make(map[string]*schedulingv1.PriorityClass),
 
-			option := options.NewServerOption()
-			option.RegisterOptions()
-			config, err := kube.BuildConfig(option.KubeClientOptions)
-			if err != nil {
-				return
+				Recorder: record.NewFakeRecorder(100),
 			}
-
-			sc := cache.New(config, option.SchedulerNames, option.DefaultQueue, option.NodeSelector)
-			schedulerCache := sc.(*cache.SchedulerCache)
-			schedulerCache.Binder = binder
-			schedulerCache.Evictor = evictor
-			schedulerCache.StatusUpdater = &util.FakeStatusUpdater{}
-			schedulerCache.VolumeBinder = &util.FakeVolumeBinder{}
-			schedulerCache.Recorder = record.NewFakeRecorder(100)
-
 			schedulerCache.PriorityClasses["high-priority"] = &schedulingv1.PriorityClass{
 				Value: 100000,
 			}
@@ -310,7 +314,7 @@ func TestPreempt(t *testing.T) {
 				Value: 10,
 			}
 			for _, node := range test.nodes {
-				schedulerCache.AddNode(node)
+				schedulerCache.AddOrUpdateNode(node)
 			}
 			for _, pod := range test.pods {
 				schedulerCache.AddPod(pod)

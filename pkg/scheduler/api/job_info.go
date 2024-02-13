@@ -33,6 +33,7 @@ import (
 	batch "volcano.sh/apis/pkg/apis/batch/v1alpha1"
 	"volcano.sh/apis/pkg/apis/scheduling"
 	"volcano.sh/apis/pkg/apis/scheduling/v1beta1"
+
 	volumescheduling "volcano.sh/volcano/pkg/scheduler/capabilities/volumebinding"
 )
 
@@ -130,6 +131,11 @@ type TaskInfo struct {
 	NumaInfo   *TopologyInfo
 	PodVolumes *volumescheduling.PodVolumes
 	Pod        *v1.Pod
+
+	// CustomBindErrHandler is a custom callback func called when task bind err.
+	CustomBindErrHandler func() error `json:"-"`
+	// CustomBindErrHandlerSucceeded indicates whether CustomBindErrHandler is executed successfully.
+	CustomBindErrHandlerSucceeded bool
 }
 
 func getJobID(pod *v1.Pod) JobID {
@@ -328,6 +334,15 @@ type JobInfo struct {
 	// * value means workload can use all the revocable node for during node active revocable time.
 	RevocableZone string
 	Budget        *DisruptionBudget
+
+	// CMU719 p3 custom properties
+	// Author: Tianya Chen
+	ID int
+	Trace string
+	Type string
+	FastDuration int
+	SlowDuration int
+	CreationTime metav1.Time
 }
 
 // NewJobInfo creates a new jobInfo for set of tasks
@@ -574,7 +589,7 @@ func (ji *JobInfo) Clone() *JobInfo {
 		PodGroup: ji.PodGroup.Clone(),
 
 		TaskStatusIndex:       map[TaskStatus]tasksMap{},
-		TaskMinAvailable:      ji.TaskMinAvailable,
+		TaskMinAvailable:      make(map[TaskID]int32),
 		TaskMinAvailableTotal: ji.TaskMinAvailableTotal,
 		Tasks:                 tasksMap{},
 		Preemptable:           ji.Preemptable,
@@ -584,6 +599,9 @@ func (ji *JobInfo) Clone() *JobInfo {
 
 	ji.CreationTimestamp.DeepCopyInto(&info.CreationTimestamp)
 
+	for task, minAvailable := range ji.TaskMinAvailable {
+		info.TaskMinAvailable[task] = minAvailable
+	}
 	for _, task := range ji.Tasks {
 		info.AddTaskInfo(task.Clone())
 	}
@@ -653,13 +671,13 @@ func (ji *JobInfo) TaskSchedulingReason(tid TaskID) (reason string, msg string) 
 
 	msg = ji.JobFitErrors
 	switch status := ctx.Status; status {
-	case Allocated, Pipelined:
+	case Allocated:
 		// Pod is schedulable
 		msg = fmt.Sprintf("Pod %s/%s can possibly be assigned to %s", taskInfo.Namespace, taskInfo.Name, ctx.NodeName)
-		if status == Pipelined {
-			msg += " once resource is released"
-		}
 		return PodReasonSchedulable, msg
+	case Pipelined:
+		msg = fmt.Sprintf("Pod %s/%s can possibly be assigned to %s, once resource is released", taskInfo.Namespace, taskInfo.Name, ctx.NodeName)
+		return PodReasonUnschedulable, msg
 	case Pending:
 		if fe := ji.NodesFitErrors[tid]; fe != nil {
 			// Pod is not schedulable

@@ -77,7 +77,7 @@ Note:
 Install Volcano on an existing Kubernetes cluster. This way is both available for x86_64 and arm64 architecture.
 
 ```
-kubectl apply -f https://raw.githubusercontent.com/volcano-sh/volcano/master/installer/volcano-development.yaml
+kubectl apply -f https://raw.githubusercontent.com/volcano-sh/volcano/release-1.8/installer/volcano-development.yaml
 ```
 
 Enjoy! Volcano will create the following resources in `volcano-system` namespace.
@@ -123,9 +123,24 @@ This way is only available for x86_64 temporarily.
 If you want to get prometheus and grafana volcano dashboard after volcano installed, try following commands:
 
 ```bash
-make TAG=latest generate-yaml
-kubectl create -f _output/release/volcano-monitoring-latest.yaml
+make TAG=v1.8.2 generate-yaml
+kubectl create -f _output/release/volcano-monitoring-v1.8.2.yaml
 ```
+
+## Kubernetes compatibility
+
+|                        | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 | Kubernetes 1.23 | Kubernetes 1.24 | Kubernetes 1.25 | Kubernetes 1.27 | Kubernetes 1.28 |
+|------------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
+| Volcano v1.6          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               | -               | -               | -               |
+| Volcano v1.7          | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+| Volcano v1.8          | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |✓               | ✓               | ✓               |
+| Volcano HEAD (master) | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |✓               | ✓               | ✓               |
+
+Key:
+* `✓` Volcano and the Kubernetes version are exactly compatible.
+* `+` Volcano has features or API objects that may not be present in the Kubernetes version.
+* `-` The Kubernetes version has features or API objects that Volcano can't use.
+
 
 ## Meeting
 

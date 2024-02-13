@@ -30,6 +30,8 @@ import (
 
 	_ "volcano.sh/volcano/pkg/controllers/garbagecollector"
 	_ "volcano.sh/volcano/pkg/controllers/job"
+	_ "volcano.sh/volcano/pkg/controllers/jobflow"
+	_ "volcano.sh/volcano/pkg/controllers/jobtemplate"
 	_ "volcano.sh/volcano/pkg/controllers/podgroup"
 	_ "volcano.sh/volcano/pkg/controllers/queue"
 
@@ -56,7 +58,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	if s.CertFile != "" && s.KeyFile != "" {
+	if s.CaCertFile != "" && s.CertFile != "" && s.KeyFile != "" {
 		if err := s.ParseCAFiles(nil); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to parse CA file: %v\n", err)
 			os.Exit(1)

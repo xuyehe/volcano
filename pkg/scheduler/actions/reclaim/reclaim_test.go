@@ -17,17 +17,18 @@ limitations under the License.
 package reclaim
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	v1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 
 	schedulingv1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
-	"volcano.sh/volcano/cmd/scheduler/app/options"
-	"volcano.sh/volcano/pkg/kube"
+	"volcano.sh/volcano/pkg/scheduler/api"
 	"volcano.sh/volcano/pkg/scheduler/cache"
 	"volcano.sh/volcano/pkg/scheduler/conf"
 	"volcano.sh/volcano/pkg/scheduler/framework"
@@ -38,6 +39,12 @@ import (
 )
 
 func TestReclaim(t *testing.T) {
+	var tmp *cache.SchedulerCache
+	patchUpdateQueueStatus := gomonkey.ApplyMethod(reflect.TypeOf(tmp), "UpdateQueueStatus", func(scCache *cache.SchedulerCache, queue *api.QueueInfo) error {
+		return nil
+	})
+	defer patchUpdateQueueStatus.Reset()
+
 	framework.RegisterPluginBuilder("conformance", conformance.New)
 	framework.RegisterPluginBuilder("gang", gang.New)
 	framework.RegisterPluginBuilder("proportion", proportion.New)
@@ -82,13 +89,13 @@ func TestReclaim(t *testing.T) {
 				},
 			},
 			pods: []*v1.Pod{
-				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
-				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptee3", "n1", v1.PodRunning, util.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
-				util.BuildPod("c1", "preemptor1", "", v1.PodPending, util.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee1", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", map[string]string{schedulingv1beta1.PodPreemptable: "true"}, make(map[string]string)),
+				util.BuildPod("c1", "preemptee2", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptee3", "n1", v1.PodRunning, api.BuildResourceList("1", "1G"), "pg1", make(map[string]string), make(map[string]string)),
+				util.BuildPod("c1", "preemptor1", "", v1.PodPending, api.BuildResourceList("1", "1G"), "pg2", make(map[string]string), make(map[string]string)),
 			},
 			nodes: []*v1.Node{
-				util.BuildNode("n1", util.BuildResourceList("3", "3Gi"), make(map[string]string)),
+				util.BuildNode("n1", api.BuildResourceList("3", "3Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
 			},
 			queues: []*schedulingv1beta1.Queue{
 				{
@@ -122,22 +129,18 @@ func TestReclaim(t *testing.T) {
 		evictor := &util.FakeEvictor{
 			Channel: make(chan string),
 		}
+		schedulerCache := &cache.SchedulerCache{
+			Nodes:           make(map[string]*api.NodeInfo),
+			Jobs:            make(map[api.JobID]*api.JobInfo),
+			Queues:          make(map[api.QueueID]*api.QueueInfo),
+			Binder:          binder,
+			Evictor:         evictor,
+			StatusUpdater:   &util.FakeStatusUpdater{},
+			VolumeBinder:    &util.FakeVolumeBinder{},
+			PriorityClasses: make(map[string]*schedulingv1.PriorityClass),
 
-		option := options.NewServerOption()
-		option.RegisterOptions()
-		config, err := kube.BuildConfig(option.KubeClientOptions)
-		if err != nil {
-			return
+			Recorder: record.NewFakeRecorder(100),
 		}
-
-		sc := cache.New(config, option.SchedulerNames, option.DefaultQueue, option.NodeSelector)
-		schedulerCache := sc.(*cache.SchedulerCache)
-		schedulerCache.Binder = binder
-		schedulerCache.Evictor = evictor
-		schedulerCache.StatusUpdater = &util.FakeStatusUpdater{}
-		schedulerCache.VolumeBinder = &util.FakeVolumeBinder{}
-		schedulerCache.Recorder = record.NewFakeRecorder(100)
-
 		schedulerCache.PriorityClasses["high-priority"] = &schedulingv1.PriorityClass{
 			Value: 100000,
 		}
@@ -145,7 +148,7 @@ func TestReclaim(t *testing.T) {
 			Value: 10,
 		}
 		for _, node := range test.nodes {
-			schedulerCache.AddNode(node)
+			schedulerCache.AddOrUpdateNode(node)
 		}
 		for _, pod := range test.pods {
 			schedulerCache.AddPod(pod)

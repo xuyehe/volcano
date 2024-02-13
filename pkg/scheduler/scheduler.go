@@ -53,30 +53,23 @@ type Scheduler struct {
 }
 
 // NewScheduler returns a scheduler
-func NewScheduler(
-	config *rest.Config,
-	schedulerNames []string,
-	schedulerConf string,
-	period time.Duration,
-	defaultQueue string,
-	nodeSelectors []string,
-) (*Scheduler, error) {
+func NewScheduler(config *rest.Config, opt *options.ServerOption) (*Scheduler, error) {
 	var watcher filewatcher.FileWatcher
-	if schedulerConf != "" {
+	if opt.SchedulerConf != "" {
 		var err error
-		path := filepath.Dir(schedulerConf)
+		path := filepath.Dir(opt.SchedulerConf)
 		watcher, err = filewatcher.NewFileWatcher(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed creating filewatcher for %s: %v", schedulerConf, err)
+			return nil, fmt.Errorf("failed creating filewatcher for %s: %v", opt.SchedulerConf, err)
 		}
 	}
 
-	cache := schedcache.New(config, schedulerNames, defaultQueue, nodeSelectors)
+	cache := schedcache.New(config, opt.SchedulerNames, opt.DefaultQueue, opt.NodeSelector, opt.NodeWorkerThreads, opt.IgnoredCSIProvisioners)
 	scheduler := &Scheduler{
-		schedulerConf:  schedulerConf,
+		schedulerConf:  opt.SchedulerConf,
 		fileWatcher:    watcher,
 		cache:          cache,
-		schedulePeriod: period,
+		schedulePeriod: opt.SchedulePeriod,
 		dumper:         schedcache.Dumper{Cache: cache},
 	}
 
@@ -116,14 +109,16 @@ func (pc *Scheduler) runOnce() {
 	}
 
 	ssn := framework.OpenSession(pc.cache, plugins, configurations)
-	defer framework.CloseSession(ssn)
+	defer func() {
+		framework.CloseSession(ssn)
+		metrics.UpdateE2eDuration(metrics.Duration(scheduleStartTime))
+	}()
 
 	for _, action := range actions {
 		actionStartTime := time.Now()
 		action.Execute(ssn)
 		metrics.UpdateActionDuration(action.Name(), metrics.Duration(actionStartTime))
 	}
-	metrics.UpdateE2eDuration(metrics.Duration(scheduleStartTime))
 }
 
 func (pc *Scheduler) loadSchedulerConf() {
@@ -193,6 +188,7 @@ func (pc *Scheduler) watchSchedulerConf(stopCh <-chan struct{}) {
 			klog.V(4).Infof("watch %s event: %v", pc.schedulerConf, event)
 			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
 				pc.loadSchedulerConf()
+				pc.cache.SetMetricsConf(pc.metricsConf)
 			}
 		case err, ok := <-errCh:
 			if !ok {

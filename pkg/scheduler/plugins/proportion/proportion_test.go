@@ -14,17 +14,16 @@ limitations under the License.
 package proportion
 
 import (
+	"io/ioutil"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"io/ioutil"
-
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	apiv1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -32,11 +31,9 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
-	"net/http"
-
 	schedulingv1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
+
 	"volcano.sh/volcano/cmd/scheduler/app/options"
-	"volcano.sh/volcano/pkg/kube"
 	"volcano.sh/volcano/pkg/scheduler/actions/allocate"
 	"volcano.sh/volcano/pkg/scheduler/api"
 	"volcano.sh/volcano/pkg/scheduler/cache"
@@ -112,6 +109,11 @@ func TestProportion(t *testing.T) {
 	})
 	defer patches.Reset()
 
+	patchUpdateQueueStatus := gomonkey.ApplyMethod(reflect.TypeOf(tmp), "UpdateQueueStatus", func(scCache *cache.SchedulerCache, queue *api.QueueInfo) error {
+		return nil
+	})
+	defer patchUpdateQueueStatus.Reset()
+
 	framework.RegisterPluginBuilder(PluginName, New)
 	framework.RegisterPluginBuilder(gang.PluginName, gang.New)
 	framework.RegisterPluginBuilder(priority.PluginName, priority.New)
@@ -119,16 +121,16 @@ func TestProportion(t *testing.T) {
 	defer framework.CleanupPluginBuilders()
 
 	// Running pods
-	w1 := util.BuildPod("ns1", "worker-1", "", apiv1.PodRunning, util.BuildResourceList("3", "3k"), "pg1", map[string]string{"role": "worker"}, map[string]string{"selector": "worker"})
-	w2 := util.BuildPod("ns1", "worker-2", "", apiv1.PodRunning, util.BuildResourceList("5", "5k"), "pg1", map[string]string{"role": "worker"}, map[string]string{})
-	w3 := util.BuildPod("ns1", "worker-3", "", apiv1.PodRunning, util.BuildResourceList("4", "4k"), "pg2", map[string]string{"role": "worker"}, map[string]string{})
+	w1 := util.BuildPod("ns1", "worker-1", "", apiv1.PodRunning, api.BuildResourceList("3", "3k"), "pg1", map[string]string{"role": "worker"}, map[string]string{"selector": "worker"})
+	w2 := util.BuildPod("ns1", "worker-2", "", apiv1.PodRunning, api.BuildResourceList("5", "5k"), "pg1", map[string]string{"role": "worker"}, map[string]string{})
+	w3 := util.BuildPod("ns1", "worker-3", "", apiv1.PodRunning, api.BuildResourceList("4", "4k"), "pg2", map[string]string{"role": "worker"}, map[string]string{})
 	w1.Spec.Affinity = getWorkerAffinity()
 	w2.Spec.Affinity = getWorkerAffinity()
 	w3.Spec.Affinity = getWorkerAffinity()
 
 	// nodes
-	n1 := util.BuildNode("node1", util.BuildResourceList("4", "4k"), map[string]string{"selector": "worker"})
-	n2 := util.BuildNode("node2", util.BuildResourceList("3", "3k"), map[string]string{})
+	n1 := util.BuildNode("node1", api.BuildResourceList("4", "4k", []api.ScalarResource{{Name: "pods", Value: "10"}}...), map[string]string{"selector": "worker"})
+	n2 := util.BuildNode("node2", api.BuildResourceList("3", "3k", []api.ScalarResource{{Name: "pods", Value: "10"}}...), map[string]string{})
 	n1.Status.Allocatable["pods"] = resource.MustParse("15")
 	n2.Status.Allocatable["pods"] = resource.MustParse("15")
 	n1.Labels["kubernetes.io/hostname"] = "node1"
@@ -201,26 +203,21 @@ func TestProportion(t *testing.T) {
 				t.Logf("%s: [Event] %s", test.name, event)
 			}
 		}()
-
-		option := options.NewServerOption()
-		option.RegisterOptions()
-		config, err := kube.BuildConfig(option.KubeClientOptions)
-		if err != nil {
-			return
+		schedulerCache := &cache.SchedulerCache{
+			Nodes:           make(map[string]*api.NodeInfo),
+			Jobs:            make(map[api.JobID]*api.JobInfo),
+			PriorityClasses: make(map[string]*schedulingv1.PriorityClass),
+			Queues:          make(map[api.QueueID]*api.QueueInfo),
+			Binder:          binder,
+			StatusUpdater:   &util.FakeStatusUpdater{},
+			VolumeBinder:    &util.FakeVolumeBinder{},
+			Recorder:        recorder,
 		}
-
-		sc := cache.New(config, option.SchedulerNames, option.DefaultQueue, option.NodeSelector)
-		schedulerCache := sc.(*cache.SchedulerCache)
-		schedulerCache.Binder = binder
-		schedulerCache.StatusUpdater = &util.FakeStatusUpdater{}
-		schedulerCache.VolumeBinder = &util.FakeVolumeBinder{}
-		schedulerCache.Recorder = recorder
-
 		// deletedJobs to DeletedJobs
 		schedulerCache.DeletedJobs = workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
 
 		for _, node := range test.nodes {
-			schedulerCache.AddNode(node)
+			schedulerCache.AddOrUpdateNode(node)
 		}
 		for _, pod := range test.pods {
 			schedulerCache.AddPod(pod)
@@ -286,10 +283,9 @@ func TestProportion(t *testing.T) {
 							t.Errorf("after delete vcjob pg2, queue_allocated metrics is fail,%v", metrics)
 							c <- false
 							return
-						} else {
-							t.Logf("after delete vcjob pg2, queue_allocated metrics is ok,%v", metrics)
-							c <- true
 						}
+						t.Logf("after delete vcjob pg2, queue_allocated metrics is ok,%v", metrics)
+						c <- true
 					}
 					num++
 				}

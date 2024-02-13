@@ -137,32 +137,36 @@ func (tp *tdmPlugin) availableRevocableZone(rz string) error {
 }
 
 func (tp *tdmPlugin) OnSessionOpen(ssn *framework.Session) {
-	klog.V(4).Infof("Enter tdm plugin ...")
-	if klog.V(4).Enabled() {
-		defer func() {
-			klog.V(4).Infof("Leaving tdm plugin.")
-		}()
-	}
+	klog.V(5).Infof("Enter tdm plugin ...")
+	defer func() {
+		klog.V(5).Infof("Leaving tdm plugin.")
+	}()
 
 	// tdm plugin just handle revocable node
-	predicateFn := func(task *api.TaskInfo, node *api.NodeInfo) error {
+	predicateFn := func(task *api.TaskInfo, node *api.NodeInfo) ([]*api.Status, error) {
+		predicateStatus := make([]*api.Status, 0)
+		tdmStatus := &api.Status{}
 		if node.RevocableZone == "" {
-			return nil
+			return predicateStatus, nil
 		}
 
 		if err := tp.availableRevocableZone(node.RevocableZone); err != nil {
-			return fmt.Errorf("plugin %s predicates %w", tp.Name(), err)
+			tdmStatus.Code = api.UnschedulableAndUnresolvable
+			tdmStatus.Reason = fmt.Sprintf("plugin %s predicates %v", tp.Name(), err)
+			return predicateStatus, fmt.Errorf("plugin %s predicates %v", tp.Name(), err)
 		}
 
 		klog.V(4).Infof("TDM node %v revocable zone %v:%v is active", node.Name, node.RevocableZone, tp.revocableZone[node.RevocableZone])
 
 		if len(task.RevocableZone) == 0 {
 			msg := fmt.Sprintf("task %s/%s is not allow to dispatch to revocable node %s", task.Namespace, task.Name, node.Name)
-			return fmt.Errorf("plugin %s predicates %s", tp.Name(), msg)
+			return predicateStatus, fmt.Errorf("plugin %s predicates %s", tp.Name(), msg)
 		}
 
+		tdmStatus.Code = api.Success
+		predicateStatus = append(predicateStatus, tdmStatus)
 		klog.V(4).Infof("TDM filter for Task %s/%s on node %s pass.", task.Namespace, task.Name, node.Name)
-		return nil
+		return predicateStatus, nil
 	}
 
 	// tdm plugin just handle revocable node

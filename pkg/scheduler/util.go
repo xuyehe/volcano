@@ -29,14 +29,12 @@ import (
 )
 
 var defaultSchedulerConf = `
-actions: "enqueue, allocate, backfill"
+actions: "allocate"
 tiers:
 - plugins:
   - name: priority
   - name: gang
-  - name: conformance
 - plugins:
-  - name: overcommit
   - name: drf
   - name: predicates
   - name: proportion

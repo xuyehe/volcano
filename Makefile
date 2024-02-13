@@ -15,8 +15,9 @@
 BIN_DIR=_output/bin
 RELEASE_DIR=_output/release
 REPO_PATH=volcano.sh/volcano
-IMAGE_PREFIX=volcanosh
+IMAGE_PREFIX=sailimages
 CRD_OPTIONS ?= "crd:crdVersions=v1,generateEmbeddedObjectMeta=true"
+CRD_OPTIONS_EXCLUDE_DESCRIPTION=${CRD_OPTIONS}",maxDescLen=0"
 CC ?= "gcc"
 SUPPORT_PLUGINS ?= "no"
 CRD_VERSION ?= v1
@@ -28,6 +29,8 @@ GOBIN=$(shell go env GOPATH)/bin
 else
 GOBIN=$(shell go env GOBIN)
 endif
+
+OS=$(shell uname -s)
 
 # Get OS architecture
 OSARCH=$(shell uname -m)
@@ -82,13 +85,17 @@ vc-webhook-manager: init
 	CC=${CC} CGO_ENABLED=0 go build -ldflags ${LD_FLAGS} -o ${BIN_DIR}/vc-webhook-manager ./cmd/webhook-manager
 
 vcctl: init
-	CC=${CC} CGO_ENABLED=0 go build -ldflags ${LD_FLAGS} -o ${BIN_DIR}/vcctl ./cmd/cli
+	if [ ${OS} = 'Darwin' ];then\
+		CC=${CC} CGO_ENABLED=0 GOOS=darwin go build -ldflags ${LD_FLAGS} -o ${BIN_DIR}/vcctl ./cmd/cli;\
+	else\
+		CC=${CC} CGO_ENABLED=0 go build -ldflags ${LD_FLAGS} -o ${BIN_DIR}/vcctl ./cmd/cli;\
+	fi;
 
 image_bins: vc-scheduler vc-controller-manager vc-webhook-manager
 
 images:
 	for name in controller-manager scheduler webhook-manager; do\
-		docker buildx build -t "${IMAGE_PREFIX}/vc-$$name:$(TAG)" . -f ./installer/dockerfile/$$name/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
+		docker buildx build -t "${IMAGE_PREFIX}/vc-sail-$$name:v3" . -f ./installer/dockerfile/$$name/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
 	done
 
 generate-code:
@@ -96,12 +103,25 @@ generate-code:
 
 # Generate manifests e.g. CRD, RBAC etc.
 manifests: controller-gen
-	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./vendor/volcano.sh/apis/pkg/apis/scheduling/v1beta1;./vendor/volcano.sh/apis/pkg/apis/batch/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/bus/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/nodeinfo/v1alpha1" output:crd:artifacts:config=config/crd/bases
-	$(CONTROLLER_GEN) "crd:crdVersions=v1beta1" paths="./vendor/volcano.sh/apis/pkg/apis/scheduling/v1beta1;./vendor/volcano.sh/apis/pkg/apis/batch/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/bus/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/nodeinfo/v1alpha1" output:crd:artifacts:config=config/crd/v1beta1
+	go mod vendor
+	# volcano crd base
+	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./vendor/volcano.sh/apis/pkg/apis/scheduling/v1beta1;./vendor/volcano.sh/apis/pkg/apis/batch/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/bus/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/nodeinfo/v1alpha1" output:crd:artifacts:config=config/crd/volcano/bases
+	# generate volcano job crd yaml without description to avoid yaml size limit when using `kubectl apply`
+	$(CONTROLLER_GEN) $(CRD_OPTIONS_EXCLUDE_DESCRIPTION) paths="./vendor/volcano.sh/apis/pkg/apis/batch/v1alpha1" output:crd:artifacts:config=config/crd/volcano/bases
+	# volcano crd v1beta1
+	$(CONTROLLER_GEN) "crd:crdVersions=v1beta1" paths="./vendor/volcano.sh/apis/pkg/apis/scheduling/v1beta1;./vendor/volcano.sh/apis/pkg/apis/batch/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/bus/v1alpha1;./vendor/volcano.sh/apis/pkg/apis/nodeinfo/v1alpha1" output:crd:artifacts:config=config/crd/volcano/v1beta1
+	# generate volcano job crd yaml without description to avoid yaml size limit when using `kubectl apply`
+	$(CONTROLLER_GEN) "crd:maxDescLen=0,crdVersions=v1beta1" paths="./vendor/volcano.sh/apis/pkg/apis/batch/v1alpha1" output:crd:artifacts:config=config/crd/volcano/v1beta1
+	# jobflow crd base
+	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./vendor/volcano.sh/apis/pkg/apis/flow/v1alpha1" output:crd:artifacts:config=config/crd/jobflow/bases
 
 unit-test:
 	go clean -testcache
-	go test -p 8 -race $$(find pkg cmd -type f -name '*_test.go' | sed -r 's|/[^/]+$$||' | sort | uniq | sed "s|^|volcano.sh/volcano/|")
+	if [ ${OS} = 'Darwin' ];then\
+		GOOS=darwin go list ./... | grep -v "/e2e" | xargs  go test;\
+	else\
+		go test -p 8 -race $$(find pkg cmd -type f -name '*_test.go' | sed -r 's|/[^/]+$$||' | sort | uniq | sed "s|^|volcano.sh/volcano/|");\
+	fi;
 
 e2e: images
 	./hack/run-e2e-kind.sh
@@ -127,6 +147,9 @@ e2e-test-stress: images
 generate-yaml: init manifests
 	./hack/generate-yaml.sh TAG=${RELEASE_VER} CRD_VERSION=${CRD_VERSION}
 
+generate-charts: init manifests
+	./hack/generate-charts.sh 
+	
 release-env:
 	./hack/build-env.sh release
 
@@ -143,7 +166,6 @@ clean:
 verify:
 	hack/verify-gofmt.sh
 	hack/verify-gencode.sh
-	hack/verify-vendor.sh
 	hack/verify-vendor-licenses.sh
 
 lint: ## Lint the files
@@ -178,5 +200,5 @@ CONTROLLER_GEN=$(shell which controller-gen)
 endif
 
 update-development-yaml:
-	make generate-yaml TAG=latest RELEASE_DIR=installer
-	mv installer/volcano-latest.yaml installer/volcano-development.yaml
+	make generate-yaml TAG=v1.8.2 RELEASE_DIR=installer
+	mv installer/volcano-v1.8.2.yaml installer/volcano-development.yaml

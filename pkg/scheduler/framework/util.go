@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 
-	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/framework"
+	k8sframework "k8s.io/kubernetes/pkg/scheduler/framework"
 
 	"volcano.sh/volcano/pkg/scheduler/api"
 )
@@ -223,14 +223,14 @@ func (pal *PodAffinityLister) FilteredList(podFilter PodFilter, selector labels.
 }
 
 // GenerateNodeMapAndSlice returns the nodeMap and nodeSlice generated from ssn
-func GenerateNodeMapAndSlice(nodes map[string]*api.NodeInfo) map[string]*schedulernodeinfo.NodeInfo {
-	nodeMap := make(map[string]*schedulernodeinfo.NodeInfo)
+func GenerateNodeMapAndSlice(nodes map[string]*api.NodeInfo) map[string]*k8sframework.NodeInfo {
+	nodeMap := make(map[string]*k8sframework.NodeInfo)
 	for _, node := range nodes {
-		nodeInfo := schedulernodeinfo.NewNodeInfo(node.Pods()...)
+		nodeInfo := k8sframework.NewNodeInfo(node.Pods()...)
 		nodeInfo.SetNode(node.Node)
 		nodeMap[node.Name] = nodeInfo
 		// add imagestate into nodeinfo
-		nodeMap[node.Name].ImageStates = node.CloneImageSumary()
+		nodeMap[node.Name].ImageStates = node.CloneImageSummary()
 	}
 	return nodeMap
 }
@@ -262,4 +262,25 @@ func (nl *NodeLister) List() ([]*v1.Node, error) {
 		nodes = append(nodes, node.Node)
 	}
 	return nodes, nil
+}
+
+// ConvertPredicateStatus return predicate status from k8sframework status
+func ConvertPredicateStatus(status *k8sframework.Status) *api.Status {
+	internalStatus := &api.Status{}
+	if status.Code() == k8sframework.Success {
+		internalStatus.Code = api.Success
+		return internalStatus
+	} else if status.Code() == k8sframework.Unschedulable {
+		internalStatus.Code = api.Unschedulable
+		internalStatus.Reason = status.Message()
+		return internalStatus
+	} else if status.Code() == k8sframework.UnschedulableAndUnresolvable {
+		internalStatus.Code = api.UnschedulableAndUnresolvable
+		internalStatus.Reason = status.Message()
+		return internalStatus
+	} else {
+		internalStatus.Code = api.Error
+		internalStatus.Reason = status.Message()
+		return internalStatus
+	}
 }

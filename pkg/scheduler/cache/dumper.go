@@ -19,10 +19,12 @@ package cache
 import (
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"k8s.io/klog/v2"
+
 	"volcano.sh/volcano/pkg/scheduler/api"
 )
 
@@ -44,6 +46,14 @@ func (d *Dumper) dumpAll() {
 	for _, jobInfo := range snapshot.Jobs {
 		klog.Info(d.printJobInfo(jobInfo))
 	}
+
+	d.displaySchedulerMemStats()
+}
+
+func (d *Dumper) displaySchedulerMemStats() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	klog.Infof("volcano scheduler memory stat: %+v\n", m)
 }
 
 func (d *Dumper) printNodeInfo(node *api.NodeInfo) string {

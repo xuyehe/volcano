@@ -37,8 +37,8 @@ func (ra *Action) Name() string {
 func (ra *Action) Initialize() {}
 
 func (ra *Action) Execute(ssn *framework.Session) {
-	klog.V(3).Infof("Enter Reclaim ...")
-	defer klog.V(3).Infof("Leaving Reclaim ...")
+	klog.V(5).Infof("Enter Reclaim ...")
+	defer klog.V(5).Infof("Leaving Reclaim ...")
 
 	queues := util.NewPriorityQueue(ssn.QueueOrderFn)
 	queueMap := map[api.QueueID]*api.QueueInfo{}
@@ -123,11 +123,20 @@ func (ra *Action) Execute(ssn *framework.Session) {
 
 		assigned := false
 		for _, n := range ssn.Nodes {
-			// If predicates failed, next node.
-			if err := ssn.PredicateFn(task, n); err != nil {
+			var statusSets util.StatusSets
+			statusSets, err := ssn.PredicateFn(task, n)
+			if err != nil {
+				klog.V(5).Infof("reclaim predicates failed for task <%s/%s> on node <%s>: %v",
+					task.Namespace, task.Name, n.Name, err)
 				continue
 			}
 
+			// Allows scheduling to nodes that are in Success or Unschedulable state after filtering by predicate.
+			if statusSets.ContainsUnschedulableAndUnresolvable() || statusSets.ContainsErrorSkipOrWait() {
+				klog.V(5).Infof("predicates failed in reclaim for task <%s/%s> on node <%s>, reason is %s.",
+					task.Namespace, task.Name, n.Name, statusSets.Message())
+				continue
+			}
 			klog.V(3).Infof("Considering Task <%s/%s> on Node <%s>.",
 				task.Namespace, task.Name, n.Name)
 

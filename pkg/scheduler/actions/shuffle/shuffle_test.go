@@ -17,9 +17,11 @@
 package shuffle
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/golang/mock/gomock"
 	v1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -27,8 +29,6 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	schedulingv1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
-	"volcano.sh/volcano/cmd/scheduler/app/options"
-	"volcano.sh/volcano/pkg/kube"
 	"volcano.sh/volcano/pkg/scheduler/api"
 	"volcano.sh/volcano/pkg/scheduler/cache"
 	"volcano.sh/volcano/pkg/scheduler/conf"
@@ -38,6 +38,12 @@ import (
 )
 
 func TestShuffle(t *testing.T) {
+	var tmp *cache.SchedulerCache
+	patchUpdateQueueStatus := gomonkey.ApplyMethod(reflect.TypeOf(tmp), "UpdateQueueStatus", func(scCache *cache.SchedulerCache, queue *api.QueueInfo) error {
+		return nil
+	})
+	defer patchUpdateQueueStatus.Reset()
+
 	var highPriority int32
 	var lowPriority int32
 	highPriority = 100
@@ -46,8 +52,8 @@ func TestShuffle(t *testing.T) {
 	ctl := gomock.NewController(t)
 	fakePlugin := mock_framework.NewMockPlugin(ctl)
 	fakePlugin.EXPECT().Name().AnyTimes().Return("fake")
-	fakePlugin.EXPECT().OnSessionOpen(gomock.Any()).AnyTimes().Return()
-	fakePlugin.EXPECT().OnSessionClose(gomock.Any()).AnyTimes().Return()
+	fakePlugin.EXPECT().OnSessionOpen(gomock.Any()).Return()
+	fakePlugin.EXPECT().OnSessionClose(gomock.Any()).Return()
 	fakePluginBuilder := func(arguments framework.Arguments) framework.Plugin {
 		return fakePlugin
 	}
@@ -64,8 +70,8 @@ func TestShuffle(t *testing.T) {
 		{
 			name: "select pods with low priority and evict them",
 			nodes: []*v1.Node{
-				util.BuildNode("node1", util.BuildResourceList("4", "8Gi"), make(map[string]string)),
-				util.BuildNode("node2", util.BuildResourceList("4", "8Gi"), make(map[string]string)),
+				util.BuildNode("node1", api.BuildResourceList("4", "8Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
+				util.BuildNode("node2", api.BuildResourceList("4", "8Gi", []api.ScalarResource{{Name: "pods", Value: "10"}}...), make(map[string]string)),
 			},
 			queues: []*schedulingv1beta1.Queue{
 				{
@@ -116,13 +122,13 @@ func TestShuffle(t *testing.T) {
 				},
 			},
 			pods: []*v1.Pod{
-				util.BuildPodWithPriority("test", "pod1-1", "node1", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg1", make(map[string]string), make(map[string]string), &lowPriority),
-				util.BuildPodWithPriority("test", "pod1-2", "node1", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg1", make(map[string]string), make(map[string]string), &highPriority),
-				util.BuildPodWithPriority("test", "pod1-3", "node1", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg1", make(map[string]string), make(map[string]string), &highPriority),
-				util.BuildPodWithPriority("test", "pod2-1", "node1", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg2", make(map[string]string), make(map[string]string), &lowPriority),
-				util.BuildPodWithPriority("test", "pod2-2", "node2", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg2", make(map[string]string), make(map[string]string), &highPriority),
-				util.BuildPodWithPriority("test", "pod3-1", "node2", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg3", make(map[string]string), make(map[string]string), &lowPriority),
-				util.BuildPodWithPriority("test", "pod3-2", "node2", v1.PodRunning, util.BuildResourceList("1", "2G"), "pg3", make(map[string]string), make(map[string]string), &highPriority),
+				util.BuildPodWithPriority("test", "pod1-1", "node1", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg1", make(map[string]string), make(map[string]string), &lowPriority),
+				util.BuildPodWithPriority("test", "pod1-2", "node1", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg1", make(map[string]string), make(map[string]string), &highPriority),
+				util.BuildPodWithPriority("test", "pod1-3", "node1", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg1", make(map[string]string), make(map[string]string), &highPriority),
+				util.BuildPodWithPriority("test", "pod2-1", "node1", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg2", make(map[string]string), make(map[string]string), &lowPriority),
+				util.BuildPodWithPriority("test", "pod2-2", "node2", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg2", make(map[string]string), make(map[string]string), &highPriority),
+				util.BuildPodWithPriority("test", "pod3-1", "node2", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg3", make(map[string]string), make(map[string]string), &lowPriority),
+				util.BuildPodWithPriority("test", "pod3-2", "node2", v1.PodRunning, api.BuildResourceList("1", "2G"), "pg3", make(map[string]string), make(map[string]string), &highPriority),
 			},
 			expected: 3,
 		},
@@ -137,22 +143,18 @@ func TestShuffle(t *testing.T) {
 		evictor := &util.FakeEvictor{
 			Channel: make(chan string),
 		}
+		schedulerCache := &cache.SchedulerCache{
+			Nodes:           make(map[string]*api.NodeInfo),
+			Jobs:            make(map[api.JobID]*api.JobInfo),
+			Queues:          make(map[api.QueueID]*api.QueueInfo),
+			Binder:          binder,
+			Evictor:         evictor,
+			StatusUpdater:   &util.FakeStatusUpdater{},
+			VolumeBinder:    &util.FakeVolumeBinder{},
+			PriorityClasses: make(map[string]*schedulingv1.PriorityClass),
 
-		option := options.NewServerOption()
-		option.RegisterOptions()
-		config, err := kube.BuildConfig(option.KubeClientOptions)
-		if err != nil {
-			return
+			Recorder: record.NewFakeRecorder(100),
 		}
-
-		sc := cache.New(config, option.SchedulerNames, option.DefaultQueue, option.NodeSelector)
-		schedulerCache := sc.(*cache.SchedulerCache)
-		schedulerCache.Binder = binder
-		schedulerCache.Evictor = evictor
-		schedulerCache.StatusUpdater = &util.FakeStatusUpdater{}
-		schedulerCache.VolumeBinder = &util.FakeVolumeBinder{}
-		schedulerCache.Recorder = record.NewFakeRecorder(100)
-
 		schedulerCache.PriorityClasses["high-priority"] = &schedulingv1.PriorityClass{
 			Value: highPriority,
 		}
@@ -161,7 +163,7 @@ func TestShuffle(t *testing.T) {
 		}
 
 		for _, node := range test.nodes {
-			schedulerCache.AddNode(node)
+			schedulerCache.AddOrUpdateNode(node)
 		}
 		for _, q := range test.queues {
 			schedulerCache.AddQueueV1beta1(q)

@@ -77,7 +77,6 @@ type Session struct {
 	jobOrderFns       map[string]api.CompareFn
 	queueOrderFns     map[string]api.CompareFn
 	taskOrderFns      map[string]api.CompareFn
-	namespaceOrderFns map[string]api.CompareFn
 	clusterOrderFns   map[string]api.CompareFn
 	predicateFns      map[string]api.PredicateFn
 	prePredicateFns   map[string]api.PrePredicateFn
@@ -123,7 +122,6 @@ func openSession(cache cache.Cache) *Session {
 		jobOrderFns:       map[string]api.CompareFn{},
 		queueOrderFns:     map[string]api.CompareFn{},
 		taskOrderFns:      map[string]api.CompareFn{},
-		namespaceOrderFns: map[string]api.CompareFn{},
 		clusterOrderFns:   map[string]api.CompareFn{},
 		predicateFns:      map[string]api.PredicateFn{},
 		prePredicateFns:   map[string]api.PrePredicateFn{},
@@ -151,8 +149,7 @@ func openSession(cache cache.Cache) *Session {
 
 	ssn.Jobs = snapshot.Jobs
 	for _, job := range ssn.Jobs {
-		// only conditions will be updated periodically
-		if job.PodGroup != nil && job.PodGroup.Status.Conditions != nil {
+		if job.PodGroup != nil {
 			ssn.podGroupStatus[job.UID] = *job.PodGroup.Status.DeepCopy()
 		}
 
@@ -200,8 +197,10 @@ func updateQueueStatus(ssn *Session) {
 		allocatedResources[queueID] = &api.Resource{}
 	}
 	for _, job := range ssn.Jobs {
-		for _, runningTask := range job.TaskStatusIndex[api.Running] {
-			allocatedResources[job.Queue].Add(runningTask.Resreq)
+		for _, task := range job.Tasks {
+			if api.AllocatedStatus(task.Status) {
+				allocatedResources[job.Queue].Add(task.Resreq)
+			}
 		}
 	}
 
@@ -235,7 +234,6 @@ func closeSession(ssn *Session) {
 	ssn.plugins = nil
 	ssn.eventHandlers = nil
 	ssn.jobOrderFns = nil
-	ssn.namespaceOrderFns = nil
 	ssn.queueOrderFns = nil
 	ssn.clusterOrderFns = nil
 	ssn.NodeList = nil
@@ -300,28 +298,28 @@ func (ssn *Session) Pipeline(task *api.TaskInfo, hostname string) error {
 	job, found := ssn.Jobs[task.Job]
 	if found {
 		if err := job.UpdateTaskStatus(task, api.Pipelined); err != nil {
-			klog.Errorf("Failed to update task <%v/%v> status to %v in Session <%v>: %v",
+			klog.Errorf("Failed to update task <%v/%v> status to %v when pipeline in Session <%v>: %v",
 				task.Namespace, task.Name, api.Pipelined, ssn.UID, err)
 			return err
 		}
 	} else {
-		klog.Errorf("Failed to find Job <%s> in Session <%s> index when binding.",
+		klog.Errorf("Failed to find Job <%s> in Session <%s> index when pipeline.",
 			task.Job, ssn.UID)
-		return fmt.Errorf("failed to find job %s when binding", task.Job)
+		return fmt.Errorf("failed to find job %s when pipeline", task.Job)
 	}
 
 	task.NodeName = hostname
 
 	if node, found := ssn.Nodes[hostname]; found {
 		if err := node.AddTask(task); err != nil {
-			klog.Errorf("Failed to add task <%v/%v> to node <%v> in Session <%v>: %v",
+			klog.Errorf("Failed to add task <%v/%v> to node <%v> when pipeline in Session <%v>: %v",
 				task.Namespace, task.Name, hostname, ssn.UID, err)
 			return err
 		}
-		klog.V(3).Infof("After added Task <%v/%v> to Node <%v>: idle <%v>, used <%v>, releasing <%v>",
+		klog.V(3).Infof("After pipelined Task <%v/%v> to Node <%v>: idle <%v>, used <%v>, releasing <%v>",
 			task.Namespace, task.Name, node.Name, node.Idle, node.Used, node.Releasing)
 	} else {
-		klog.Errorf("Failed to find Node <%s> in Session <%s> index when binding.",
+		klog.Errorf("Failed to find Node <%s> in Session <%s> index when pipeline.",
 			hostname, ssn.UID)
 		return fmt.Errorf("failed to find node %s", hostname)
 	}
@@ -361,7 +359,7 @@ func (ssn *Session) Allocate(task *api.TaskInfo, nodeInfo *api.NodeInfo) (err er
 	job, found := ssn.Jobs[task.Job]
 	if found {
 		if err := job.UpdateTaskStatus(task, api.Allocated); err != nil {
-			klog.Errorf("Failed to update task <%v/%v> status to %v in Session <%v>: %v",
+			klog.Errorf("Failed to update task <%v/%v> status to %v when binding in Session <%v>: %v",
 				task.Namespace, task.Name, api.Allocated, ssn.UID, err)
 			return err
 		}
@@ -375,7 +373,7 @@ func (ssn *Session) Allocate(task *api.TaskInfo, nodeInfo *api.NodeInfo) (err er
 
 	if node, found := ssn.Nodes[hostname]; found {
 		if err := node.AddTask(task); err != nil {
-			klog.Errorf("Failed to add task <%v/%v> to node <%v> in Session <%v>: %v",
+			klog.Errorf("Failed to add task <%v/%v> to node <%v>  when binding in Session <%v>: %v",
 				task.Namespace, task.Name, hostname, ssn.UID, err)
 			return err
 		}
@@ -405,7 +403,10 @@ func (ssn *Session) Allocate(task *api.TaskInfo, nodeInfo *api.NodeInfo) (err er
 			}
 		}
 	} else {
-		ssn.cache.RevertVolumes(task, podVolumes)
+		// p3k8s changes
+		// Author: Baljit Singh
+		fmt.Printf("entering revert volumes through jobready with task %v\n", task.Name)
+		// ssn.cache.RevertVolumes(task, podVolumes)
 	}
 
 	return nil
@@ -419,7 +420,7 @@ func (ssn *Session) dispatch(task *api.TaskInfo) error {
 	// Update status in session
 	if job, found := ssn.Jobs[task.Job]; found {
 		if err := job.UpdateTaskStatus(task, api.Binding); err != nil {
-			klog.Errorf("Failed to update task <%v/%v> status to %v in Session <%v>: %v",
+			klog.Errorf("Failed to update task <%v/%v> status to %v when binding in Session <%v>: %v",
 				task.Namespace, task.Name, api.Binding, ssn.UID, err)
 			return err
 		}
@@ -443,12 +444,12 @@ func (ssn *Session) Evict(reclaimee *api.TaskInfo, reason string) error {
 	job, found := ssn.Jobs[reclaimee.Job]
 	if found {
 		if err := job.UpdateTaskStatus(reclaimee, api.Releasing); err != nil {
-			klog.Errorf("Failed to update task <%v/%v> status to %v in Session <%v>: %v",
+			klog.Errorf("Failed to update task <%v/%v> status to %v when evicting in Session <%v>: %v",
 				reclaimee.Namespace, reclaimee.Name, api.Releasing, ssn.UID, err)
 			return err
 		}
 	} else {
-		klog.Errorf("Failed to find Job <%s> in Session <%s> index when binding.",
+		klog.Errorf("Failed to find Job <%s> in Session <%s> index when evicting.",
 			reclaimee.Job, ssn.UID)
 		return fmt.Errorf("failed to find job %s", reclaimee.Job)
 	}

@@ -23,6 +23,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	v1helper "k8s.io/kubernetes/pkg/scheduler/util"
 
@@ -77,6 +78,7 @@ func NewResource(rl v1.ResourceList) *Resource {
 			r.Memory += float64(rQuant.Value())
 		case v1.ResourcePods:
 			r.MaxTaskNum += int(rQuant.Value())
+			r.AddScalar(rName, float64(rQuant.Value()))
 		case v1.ResourceEphemeralStorage:
 			r.AddScalar(rName, float64(rQuant.MilliValue()))
 		default:
@@ -87,7 +89,7 @@ func NewResource(rl v1.ResourceList) *Resource {
 			if v1helper.IsScalarResourceName(rName) {
 				ignore := false
 				for _, val := range IgnoredDevicesList {
-					if strings.Compare(val, rName.String()) == 0 {
+					if strings.Compare(rName.String(), val) == 0 {
 						ignore = true
 						break
 					}
@@ -192,13 +194,24 @@ func (r *Resource) Get(rn v1.ResourceName) float64 {
 	}
 }
 
-// IsEmpty returns false if any kind of resource is not less than min value, otherwise returns true
+// Skip checking "pods" resource.
+// All pods request one "pods" resource now, no need to check it
+var ignoredScalarResources = sets.NewString(string(v1.ResourcePods))
+
+func IsIgnoredScalarResource(name v1.ResourceName) bool {
+	return ignoredScalarResources.Has(string(name))
+}
+
+// IsEmpty returns false if any kind of resource other than IgnoredResources is not less than min value, otherwise returns true
 func (r *Resource) IsEmpty() bool {
 	if !(r.MilliCPU < minResource && r.Memory < minResource) {
 		return false
 	}
 
-	for _, rQuant := range r.ScalarResources {
+	for rName, rQuant := range r.ScalarResources {
+		if IsIgnoredScalarResource(rName) {
+			continue
+		}
 		if rQuant >= minResource {
 			return false
 		}
@@ -345,6 +358,14 @@ func (r *Resource) Less(rr *Resource, defaultValue DimensionDefaultValue) bool {
 		return false
 	}
 
+	if defaultValue == Infinity {
+		for name := range rr.ScalarResources {
+			if _, ok := r.ScalarResources[name]; !ok {
+				return false
+			}
+		}
+	}
+
 	for resourceName, leftValue := range r.ScalarResources {
 		rightValue, ok := rr.ScalarResources[resourceName]
 		if !ok && defaultValue == Infinity {
@@ -376,6 +397,14 @@ func (r *Resource) LessEqual(rr *Resource, defaultValue DimensionDefaultValue) b
 		return false
 	}
 
+	if defaultValue == Infinity {
+		for name := range rr.ScalarResources {
+			if _, ok := r.ScalarResources[name]; !ok {
+				return false
+			}
+		}
+	}
+
 	for resourceName, leftValue := range r.ScalarResources {
 		rightValue, ok := rr.ScalarResources[resourceName]
 		if !ok && defaultValue == Infinity {
@@ -389,6 +418,42 @@ func (r *Resource) LessEqual(rr *Resource, defaultValue DimensionDefaultValue) b
 	return true
 }
 
+// LessEqualWithResourcesName returns true, []string{} only on condition that all dimensions of resources in r are less than or equal with that of rr,
+// Otherwise returns false and err string ,which show what resources are insufficient.
+// @param defaultValue "default value for resource dimension not defined in ScalarResources. Its value can only be one of 'Zero' and 'Infinity'"
+// this function is the same as LessEqual , and it will be merged to LessEqual in the future
+func (r *Resource) LessEqualWithResourcesName(rr *Resource, defaultValue DimensionDefaultValue) (bool, []string) {
+	resources := []string{}
+	lessEqualFunc := func(l, r, diff float64) bool {
+		if l < r || math.Abs(l-r) < diff {
+			return true
+		}
+		return false
+	}
+
+	if !lessEqualFunc(r.MilliCPU, rr.MilliCPU, minResource) {
+		resources = append(resources, "cpu")
+	}
+	if !lessEqualFunc(r.Memory, rr.Memory, minResource) {
+		resources = append(resources, "memory")
+	}
+
+	for resourceName, leftValue := range r.ScalarResources {
+		rightValue, ok := rr.ScalarResources[resourceName]
+		if !ok && defaultValue == Infinity {
+			continue
+		}
+
+		if !lessEqualFunc(leftValue, rightValue, minResource) {
+			resources = append(resources, string(resourceName))
+		}
+	}
+	if len(resources) > 0 {
+		return false, resources
+	}
+	return true, resources
+}
+
 // LessPartly returns true if there exists any dimension whose resource amount in r is less than that in rr.
 // Otherwise returns false.
 // @param defaultValue "default value for resource dimension not defined in ScalarResources. Its value can only be one of 'Zero' and 'Infinity'"
@@ -399,6 +464,14 @@ func (r *Resource) LessPartly(rr *Resource, defaultValue DimensionDefaultValue) 
 
 	if lessFunc(r.MilliCPU, rr.MilliCPU) || lessFunc(r.Memory, rr.Memory) {
 		return true
+	}
+
+	if defaultValue == Zero {
+		for name := range rr.ScalarResources {
+			if _, ok := r.ScalarResources[name]; !ok {
+				return true
+			}
+		}
 	}
 
 	for resourceName, leftValue := range r.ScalarResources {
@@ -427,6 +500,14 @@ func (r *Resource) LessEqualPartly(rr *Resource, defaultValue DimensionDefaultVa
 
 	if lessEqualFunc(r.MilliCPU, rr.MilliCPU, minResource) || lessEqualFunc(r.Memory, rr.Memory, minResource) {
 		return true
+	}
+
+	if defaultValue == Zero {
+		for name := range rr.ScalarResources {
+			if _, ok := r.ScalarResources[name]; !ok {
+				return true
+			}
+		}
 	}
 
 	for resourceName, leftValue := range r.ScalarResources {

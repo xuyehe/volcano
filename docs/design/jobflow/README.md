@@ -24,17 +24,15 @@ JobFlow helps migrating AI, BigData, HPC workloads to the cloud-native world. Th
 - Some jobs need to depend on the completion of the previous job or other status when running, etc. Otherwise, the correct result cannot be calculated.
 - Sometimes inter-job dependencies also require diverse dependency types, such as conditional dependencies, circular dependencies, probes, and so on.
 
-![jobflow-2.jpg](../images/jobflow-2.jpg)
+![jobflow-1.png](../images/jobflow-1.png)
 
 ## Design
 
-![jobflow-1.png](../images/jobflow-1.png)
+![jobflow-2.png](../images/jobflow-2.png)
 
-![jobflow-3.png](../images/jobflow-3.png)
+The blue part is the components of k8s itself, the orange is the existing definition of Volcano, and the red is the new definition of JobFlow.
 
-The blue part is the component of k8s itself, the green and brown are the components of volcano, and the yellow is the crd resource of volcano.
-
-jobflow job submission complete process：
+**jobflow job submission complete process**：
 
 1. After passing the Admission. kubectl will create JobTemplate and JobFlow (Volcano CRD) objects in kube-apiserver.
 
@@ -48,11 +46,17 @@ jobflow job submission complete process：
 
 6. After assigning nodes to Pods, kubelet will get the Pod's configuration from kube-apiserver and start the corresponding containers.
 
+**update jobflow**:
 
+Currently, jobflow does not support the update operation, and the update of jobflow will be blocked through webhook.
+
+**delete jobflow**:
+
+Deleting a jobflow when the jobflow is in a non-complete state will be intercepted by the webhook. otherwise, after deleting jobflow, all vcjobs created by jobflow will be deleted directly.
 
 ### Controller
 
-![jobflow-4.png](../images/jobflow-4.png)
+![jobflow-3.png](../images/jobflow-3.png)
 
 ### Webhook
 
@@ -235,7 +239,7 @@ The specification of cloud-native services defines service metadata, version lis
 
 | Attribute         | Type                                 | Required | Default Value | Description                                                  |
 | ----------------- | ------------------------------------ | -------- | ------------- | ------------------------------------------------------------ |
-| `phase` | `string` | N     |               | Succeed： All vcjobs have reached completed state。<br/>Terminating： Jobflow is deleting。<br/>Failed： A vcjob in the flow is in the failed state, so the vcjob in the flow cannot continue to be delivered。<br/>Running： Flow contains vcjob in Running state。<br/>Pending: The flow contains no vcjob in the Running state。 |
+| `phase` | `string` | N     |               | Succeed： All vcjobs have reached completed state. <br/>Terminating： Jobflow is deleting. <br/>Failed： A vcjob in the flow is in the failed state, so the vcjob in the flow cannot continue to be delivered. <br/>Running： Flow contains vcjob in Running state。<br/>Pending: When the vcjob under jobflow is not in the above situation, jobflow is in pending state. |
 
 <a id="JobRunningHistory"></a>
 
@@ -247,7 +251,11 @@ The specification of cloud-native services defines service metadata, version lis
 | `endTimestamp` | `Time` | N     |               | The end time of a certain state of the vcjob |
 | `state` | `string` | N     |               | Vcjob status |
 
-JobFlow supports the functionality of the JobTemplate patch. The example in JobFlow is as follows:
+**Scope of influence of JobFlow state change**:
+
+Changes in the current JobFlow state will not affect other resources.
+
+**JobFlow supports the functionality of the JobTemplate patch. The example in JobFlow is as follows**:
 
 ```
 apiVersion: flow.volcano.sh/v1alpha1
@@ -289,7 +297,19 @@ Here is an example of jobflow:
 * The difference between jobtemplate and vcjob is that jobtemplate will not be issued by the job controller, and jobflow can directly reference the name of the JobTemplate to implement the issuance of vcjob.
 * JobFlow supports making changes to jobtemplate when referencing jobtemplate
 
-#### Definition
+####action of jobtemplate and response impact
+
+**create jobtemplate**:
+
+Create a jobtemplate to be used by jobflow.
+
+**update jobtemplate**:
+
+After the jobtemplate is updated, it will not affect the vcjobs that have been created based on the jobtemplate. It will not affect the successfully executed jobflow. It may affect the jobflow that has not been executed. For example, the jobflow that has not been executed to the jobtemplate stage will use the updated jobtemplate template.
+
+**delete jobtemplate**:
+
+When the jobtemplate is being referenced by a non-complete jobflow, the webhook will intercept the jobtemplate deletion request.
 
 #### Key Fields
 

@@ -24,7 +24,6 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
@@ -35,24 +34,6 @@ import (
 	"volcano.sh/volcano/pkg/scheduler/api"
 	volumescheduling "volcano.sh/volcano/pkg/scheduler/capabilities/volumebinding"
 )
-
-// BuildResourceList builts resource list object
-func BuildResourceList(cpu string, memory string) v1.ResourceList {
-	return v1.ResourceList{
-		v1.ResourceCPU:      resource.MustParse(cpu),
-		v1.ResourceMemory:   resource.MustParse(memory),
-		api.GPUResourceName: resource.MustParse("0"),
-	}
-}
-
-// BuildResourceListWithGPU builts resource list with GPU
-func BuildResourceListWithGPU(cpu string, memory string, GPU string) v1.ResourceList {
-	return v1.ResourceList{
-		v1.ResourceCPU:      resource.MustParse(cpu),
-		v1.ResourceMemory:   resource.MustParse(memory),
-		api.GPUResourceName: resource.MustParse(GPU),
-	}
-}
 
 // BuildNode builts node object
 func BuildNode(name string, alloc v1.ResourceList, labels map[string]string) *v1.Node {
@@ -260,7 +241,7 @@ type FakeBinder struct {
 }
 
 // Bind used by fake binder struct to bind pods
-func (fb *FakeBinder) Bind(kubeClient *kubernetes.Clientset, tasks []*api.TaskInfo) ([]*api.TaskInfo, error) {
+func (fb *FakeBinder) Bind(kubeClient kubernetes.Interface, tasks []*api.TaskInfo) ([]*api.TaskInfo, error) {
 	for _, p := range tasks {
 		key := fmt.Sprintf("%v/%v", p.Namespace, p.Name)
 		fb.Binds[key] = p.NodeName
@@ -404,15 +385,15 @@ func (fvb *FakeVolumeBinder) GetPodVolumes(task *api.TaskInfo, node *v1.Node) (*
 	}
 	key := fmt.Sprintf("%s/%s", task.Namespace, task.Name)
 	fvb.Actions[key] = []string{"GetPodVolumes"}
-	boundClaims, claimsToBind, unboundClaimsImmediate, err := fvb.volumeBinder.GetPodVolumes(task.Pod)
+	podVolumeClaims, err := fvb.volumeBinder.GetPodVolumeClaims(task.Pod)
 	if err != nil {
 		return nil, err
 	}
-	if len(unboundClaimsImmediate) > 0 {
-		return nil, fmt.Errorf("pod has unbound immediate PersistentVolumeClaims")
-	}
+	// if len(unboundClaimsImmediate) > 0 {
+	// 	return nil, fmt.Errorf("pod has unbound immediate PersistentVolumeClaims")
+	// }
 
-	podVolumes, reasons, err := fvb.volumeBinder.FindPodVolumes(task.Pod, boundClaims, claimsToBind, node)
+	podVolumes, reasons, err := fvb.volumeBinder.FindPodVolumes(task.Pod, podVolumeClaims, node)
 	if err != nil {
 		return nil, err
 	} else if len(reasons) > 0 {

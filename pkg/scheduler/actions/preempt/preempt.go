@@ -40,8 +40,8 @@ func (pmpt *Action) Name() string {
 func (pmpt *Action) Initialize() {}
 
 func (pmpt *Action) Execute(ssn *framework.Session) {
-	klog.V(3).Infof("Enter Preempt ...")
-	defer klog.V(3).Infof("Leaving Preempt ...")
+	klog.V(5).Infof("Enter Preempt ...")
+	defer klog.V(5).Infof("Leaving Preempt ...")
 
 	preemptorsMap := map[api.QueueID]*util.PriorityQueue{}
 	preemptorTasks := map[api.JobID]*util.PriorityQueue{}
@@ -114,7 +114,7 @@ func (pmpt *Action) Execute(ssn *framework.Session) {
 
 				if preempted, _ := preempt(ssn, stmt, preemptor, func(task *api.TaskInfo) bool {
 					// Ignore non running task.
-					if task.Status != api.Running {
+					if !api.PreemptableStatus(task.Status) {
 						return false
 					}
 					// Ignore task with empty resource request.
@@ -169,7 +169,7 @@ func (pmpt *Action) Execute(ssn *framework.Session) {
 				stmt := framework.NewStatement(ssn)
 				assigned, _ := preempt(ssn, stmt, preemptor, func(task *api.TaskInfo) bool {
 					// Ignore non running task.
-					if task.Status != api.Running {
+					if !api.PreemptableStatus(task.Status) {
 						return false
 					}
 					// Ignore task with empty resource request.
@@ -203,13 +203,26 @@ func preempt(
 	predicateHelper util.PredicateHelper,
 ) (bool, error) {
 	assigned := false
-
 	allNodes := ssn.NodeList
-
 	if err := ssn.PrePredicateFn(preemptor); err != nil {
 		return false, fmt.Errorf("PrePredicate for task %s/%s failed for: %v", preemptor.Namespace, preemptor.Name, err)
 	}
-	predicateNodes, _ := predicateHelper.PredicateNodes(preemptor, allNodes, ssn.PredicateFn)
+
+	predicateFn := func(task *api.TaskInfo, node *api.NodeInfo) ([]*api.Status, error) {
+		// Allows scheduling to nodes that are in Success or Unschedulable state after filtering by predicate.
+		var statusSets util.StatusSets
+		statusSets, err := ssn.PredicateFn(task, node)
+		if err != nil {
+			return nil, api.NewFitError(task, node, err.Error())
+		}
+
+		if statusSets.ContainsUnschedulableAndUnresolvable() || statusSets.ContainsErrorSkipOrWait() {
+			return nil, api.NewFitError(task, node, statusSets.Message())
+		}
+		return nil, nil
+	}
+
+	predicateNodes, _ := predicateHelper.PredicateNodes(preemptor, allNodes, predicateFn, true)
 
 	nodeScores := util.PrioritizeNodes(preemptor, predicateNodes, ssn.BatchNodeOrderFn, ssn.NodeOrderMapFn, ssn.NodeOrderReduceFn)
 

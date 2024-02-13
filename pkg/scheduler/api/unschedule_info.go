@@ -66,7 +66,7 @@ func (f *FitErrors) SetNodeError(nodeName string, err error) {
 // Error returns the final error message
 func (f *FitErrors) Error() string {
 	if f.err == "" {
-		f.err = AllNodeUnavailableMsg
+		f.err = fmt.Sprintf("0/%v", len(f.nodes)) + " nodes are unavailable"
 	}
 	if len(f.nodes) == 0 {
 		return f.err
@@ -113,4 +113,12 @@ func NewFitError(task *TaskInfo, node *NodeInfo, message ...string) *FitError {
 // Error returns the final error message
 func (f *FitError) Error() string {
 	return fmt.Sprintf("task %s/%s on node %s fit failed: %s", f.taskNamespace, f.taskName, f.NodeName, strings.Join(f.Reasons, ", "))
+}
+
+// WrapInsufficientResourceReason wrap insufficient resource reason.
+func WrapInsufficientResourceReason(resources []string) string {
+	if len(resources) == 0 {
+		return ""
+	}
+	return "Insufficient " + resources[0]
 }

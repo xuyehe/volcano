@@ -1,4 +1,8 @@
 {{- if .Values.custom.controller_enable }}
+{{ $controller_affinity := or .Values.custom.controller_affinity .Values.custom.default_affinity }}
+{{ $controller_tolerations := or .Values.custom.controller_tolerations .Values.custom.default_tolerations }}
+{{ $controller_sc := or .Values.custom.controller_sc .Values.custom.default_sc }}
+{{ $controller_ns := or .Values.custom.controller_ns .Values.custom.default_ns }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -16,7 +20,7 @@ rules:
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: ["batch.volcano.sh"]
     resources: ["jobs"]
-    verbs: ["get", "list", "watch", "update", "delete"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
   - apiGroups: ["batch.volcano.sh"]
     resources: ["jobs/status", "jobs/finalizers"]
     verbs: ["update", "patch"]
@@ -47,6 +51,12 @@ rules:
   - apiGroups: ["scheduling.incubator.k8s.io", "scheduling.volcano.sh"]
     resources: ["podgroups", "queues", "queues/status"]
     verbs: ["get", "list", "watch", "create", "delete", "update"]
+  - apiGroups: ["flow.volcano.sh"]
+    resources: ["jobflows", "jobtemplates"]
+    verbs: ["get", "list", "watch", "create", "delete", "update"]
+  - apiGroups: [ "flow.volcano.sh" ]
+    resources: [ "jobflows/status", "jobs/finalizers","jobtemplates/status", "jobtemplates/finalizers" ]
+    verbs: [ "update", "patch" ]
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list", "watch", "create", "delete"]
@@ -62,6 +72,9 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "watch"]
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -84,6 +97,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: volcano-controller
+    {{- if .Values.custom.controller_labels }}
+    {{- toYaml .Values.custom.controller_labels | nindent 4 }}
+    {{- end }}
 spec:
   replicas: {{ .Values.custom.controller_replicas }}
   selector:
@@ -93,7 +109,24 @@ spec:
     metadata:
       labels:
         app: volcano-controller
+        {{- if .Values.custom.controller_podLabels }}
+        {{- toYaml .Values.custom.controller_podLabels | nindent 8 }}
+        {{- end }}
     spec:
+      {{- if $controller_tolerations }}
+      tolerations: {{- toYaml $controller_tolerations | nindent 8 }}
+      {{- end }}
+      {{- if $controller_ns }}
+      nodeSelector: {{- toYaml $controller_ns | nindent 8 }}
+      {{- end }}
+      {{- if $controller_affinity }}
+      affinity:
+        {{- toYaml $controller_affinity | nindent 8 }}
+      {{- end }}
+      {{- if $controller_sc }}
+      securityContext:
+        {{- toYaml $controller_sc | nindent 8 }}
+      {{- end }}
       serviceAccount: {{ .Release.Name }}-controllers
       priorityClassName: system-cluster-critical
       {{- if .Values.basic.image_pull_secret }}
@@ -102,10 +135,18 @@ spec:
       {{- end }}
       containers:
           - name: {{ .Release.Name }}-controllers
-            image: {{.Values.basic.controller_image_name}}:{{.Values.basic.image_tag_version}}
+            {{- if .Values.custom.controller_resources }}
+            resources:
+            {{- toYaml .Values.custom.controller_resources | nindent 14 }}
+            {{- end }}
+            image: {{.Values.basic.controller_image_name}}:v3
             args:
               - --logtostderr
               - --enable-healthz=true
+              - --leader-elect={{ .Values.custom.leader_elect_enable }}
+              {{- if .Values.custom.leader_elect_enable }}
+              - --lock-object-namespace={{ .Release.Namespace }}
+              {{- end }}
               - -v=4
               - 2>&1
             imagePullPolicy: {{ .Values.basic.image_pull_policy }}

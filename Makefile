@@ -95,8 +95,7 @@ image_bins: vc-scheduler vc-controller-manager vc-webhook-manager
 
 # build everytime code changes in scheduler
 scheduler-image:
-	docker buildx build -t "${IMAGE_PREFIX}/vc-sail-scheduler:v3" . -f ./installer/dockerfile/scheduler/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
-	done
+	docker buildx build -t "${IMAGE_PREFIX}/vc-sail-scheduler:v3" . -f ./installer/dockerfile/scheduler/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}
 
 # build only once
 images: scheduler-image

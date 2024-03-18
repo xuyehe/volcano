@@ -93,8 +93,14 @@ vcctl: init
 
 image_bins: vc-scheduler vc-controller-manager vc-webhook-manager
 
-images:
-	for name in controller-manager scheduler webhook-manager; do\
+# build everytime code changes in scheduler
+scheduler-image:
+	docker buildx build -t "${IMAGE_PREFIX}/vc-sail-scheduler:v3" . -f ./installer/dockerfile/scheduler/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
+	done
+
+# build only once
+images: scheduler-image
+	for name in controller-manager webhook-manager; do\
 		docker buildx build -t "${IMAGE_PREFIX}/vc-sail-$$name:v3" . -f ./installer/dockerfile/$$name/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
 	done
 

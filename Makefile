@@ -98,7 +98,7 @@ scheduler-image:
 	docker buildx build -t "${IMAGE_PREFIX}/vc-sail-scheduler:v3" . -f ./installer/dockerfile/scheduler/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}
 
 # build only once
-images: scheduler-image
+images: 
 	for name in controller-manager webhook-manager; do\
 		docker buildx build -t "${IMAGE_PREFIX}/vc-sail-$$name:v3" . -f ./installer/dockerfile/$$name/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
 	done

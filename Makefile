@@ -15,7 +15,7 @@
 BIN_DIR=_output/bin
 RELEASE_DIR=_output/release
 REPO_PATH=volcano.sh/volcano
-IMAGE_PREFIX=volcanosh
+IMAGE_PREFIX=sailimages
 CRD_OPTIONS ?= "crd:crdVersions=v1,generateEmbeddedObjectMeta=true"
 CRD_OPTIONS_EXCLUDE_DESCRIPTION=${CRD_OPTIONS}",maxDescLen=0"
 CC ?= "gcc"
@@ -89,9 +89,14 @@ vcctl: init
 
 image_bins: vc-scheduler vc-controller-manager vc-webhook-manager
 
-images:
-	for name in controller-manager scheduler webhook-manager; do\
-		docker buildx build -t "${IMAGE_PREFIX}/vc-$$name:$(TAG)" . -f ./installer/dockerfile/$$name/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS} --build-arg APK_MIRROR=${APK_MIRROR}; \
+# build everytime code changes in scheduler
+scheduler-image:
+	docker buildx build -t "${IMAGE_PREFIX}/vc-sail-scheduler:v3" . -f ./installer/dockerfile/scheduler/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}
+
+# build only once
+images: 
+	for name in controller-manager webhook-manager; do\
+		docker buildx build -t "${IMAGE_PREFIX}/vc-sail-$$name:v3" . -f ./installer/dockerfile/$$name/Dockerfile --output=type=${BUILDX_OUTPUT_TYPE} --platform ${DOCKER_PLATFORMS}; \
 	done
 
 generate-code:

@@ -1,3 +1,4 @@
+
 <a href="https://volcano.sh/">
     <img src="https://raw.githubusercontent.com/volcano-sh/volcano/master/docs/images/volcano-horizontal-color.png"/>
 </a>
@@ -10,7 +11,6 @@
 [![Release](https://img.shields.io/github/release/volcano-sh/volcano.svg)](https://github.com/volcano-sh/volcano/releases)
 [![LICENSE](https://img.shields.io/github/license/volcano-sh/volcano.svg)](https://github.com/volcano-sh/volcano/blob/master/LICENSE)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3012/badge)](https://bestpractices.coreinfrastructure.org/projects/3012)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/volcano-sh/volcano/badge)](https://scorecard.dev/viewer/?uri=github.com/volcano-sh/volcano)
 
 
 [Volcano](https://volcano.sh/) is a batch system built on Kubernetes. It provides a suite of mechanisms that are commonly required by
@@ -43,7 +43,7 @@ Volcano is an incubating project of the [Cloud Native Computing Foundation](http
 
 - [Intro: Kubernetes Batch Scheduling @ KubeCon 2019 EU](https://sched.co/MPi7)
 - [Volcano 在 Kubernetes 中运行高性能作业实践 @ ArchSummit 2019](https://archsummit.infoq.cn/2019/shenzhen/presentation/1817)
-- [Volcano：基于云原生的高密计算解决方案 @ Huawei Connection 2019](https://e.huawei.com/cn/material/event/HC/09099dce0070415e9f26ada51b2216d7)
+- [Volcano：基于云原生的高密计算解决方案 @ Huawei Connection 2019](https://agenda.events.huawei.com/2019/cn/minisite/agenda.html#dayTab=day7&tagName=%7B%22language%22%3A%22Cn%22%7D&seminarId=1743)
 - [Improving Performance of Deep Learning Workloads With Volcano @ KubeCon 2019 NA](https://sched.co/UaZi)
 - [Batch Capability of Kubernetes Intro @ KubeCon 2019 NA](https://sched.co/Uajv)
 - [Intro: Kubernetes Batch Scheduling @ KubeCon 2019 EU](https://sched.co/MPi7)
@@ -77,7 +77,7 @@ Note:
 Install Volcano on an existing Kubernetes cluster. This way is both available for x86_64 and arm64 architecture.
 
 ```
-kubectl apply -f https://raw.githubusercontent.com/volcano-sh/volcano/release-1.10/installer/volcano-development.yaml
+kubectl apply -f https://raw.githubusercontent.com/volcano-sh/volcano/release-1.8/installer/volcano-development.yaml
 ```
 
 Enjoy! Volcano will create the following resources in `volcano-system` namespace.
@@ -108,24 +108,6 @@ job.batch/volcano-admission-init   1/1           48s        96s
 
 ```
 
-### Install via helm
-
-To install official release, please visit to [helm-charts](https://github.com/volcano-sh/helm-charts) for details.
-
-```bash
-helm repo add volcano-sh https://volcano-sh.github.io/helm-charts
-helm install volcano volcano-sh/volcano -n volcano-system --create-namespace
-```
-
-Install from source code for developers:
-
-```bash
-helm install volcano installer/helm/chart/volcano --namespace volcano-system --create-namespace
-
-# list helm release
-helm list -n volcano-system
-```
-
 ### Install from code
 
 If you don't have a kubernetes cluster, try one-click install from code base:
@@ -141,20 +123,18 @@ This way is only available for x86_64 temporarily.
 If you want to get prometheus and grafana volcano dashboard after volcano installed, try following commands:
 
 ```bash
-make TAG=v1.10.0 generate-yaml
-kubectl create -f _output/release/volcano-monitoring-v1.10.0.yaml
+make TAG=v1.8.2 generate-yaml
+kubectl create -f _output/release/volcano-monitoring-v1.8.2.yaml
 ```
 
 ## Kubernetes compatibility
 
-|                       | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 | Kubernetes 1.23 | Kubernetes 1.24 | Kubernetes 1.25 | Kubernetes 1.26 | Kubernetes 1.27 | Kubernetes 1.28 | Kubernetes 1.29 |Kubernetes 1.30 |
-|-----------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|----------------|
-| Volcano v1.6          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               | -               | -               | -               | -               | -               |-               |
-| Volcano v1.7          | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               |_               |
-| Volcano v1.8          | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               |-               |
-| Volcano v1.9          | -               | -               | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |-               |
-| Volcano v1.10         | -               | -               | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |✓               |
-| Volcano HEAD (master) | -               | -               | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |✓               |
+|                        | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 | Kubernetes 1.23 | Kubernetes 1.24 | Kubernetes 1.25 | Kubernetes 1.27 | Kubernetes 1.28 |
+|------------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
+| Volcano v1.6          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               | -               | -               | -               |
+| Volcano v1.7          | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+| Volcano v1.8          | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |✓               | ✓               | ✓               |
+| Volcano HEAD (master) | -               | -               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |✓               | ✓               | ✓               |
 
 Key:
 * `✓` Volcano and the Kubernetes version are exactly compatible.
@@ -180,8 +160,6 @@ Resources:
 
 If you have any question, feel free to reach out to us in the following ways:
 
-[Volcano Slack Channel](https://cloud-native.slack.com/archives/C011GJDQS0N) | [Join](https://slack.cncf.io/)
+[Volcano Slack Channel](https://volcano-sh.slack.com)
 
 [Mailing List](https://groups.google.com/forum/#!forum/volcano-sh)
-
-Wechat: Add WeChat account `k8s2222` (华为云小助手2号) to let her pull you into the group.

@@ -1,13 +1,13 @@
 basic:
-  controller_image_name: "volcanosh/vc-controller-manager"
-  scheduler_image_name: "volcanosh/vc-scheduler"
-  admission_image_name: "volcanosh/vc-webhook-manager"
+  controller_image_name: "sailimages/vc-sail-controller-manager"
+  scheduler_image_name: "sailimages/vc-sail-scheduler"
+  admission_image_name: "sailimages/vc-sail-webhook-manager"
   admission_secret_name: "volcano-admission-secret"
   admission_config_file: "config/volcano-admission.conf"
   scheduler_config_file: "config/volcano-scheduler.conf"
   image_pull_secret: ""
   image_pull_policy: "Always"
-  image_tag_version: "v1.10.0"
+  image_tag_version: "v3"
   admission_port: 8443
   image_registry: "docker.io"
 custom:
@@ -143,7 +143,7 @@ custom:
   webhooks_namespace_selector_expressions: ~
 
 
-# Specify log level for Volcano main component  
+# Specify log level for Volcano main component
   admission_log_level: 4
   scheduler_log_level: 3
   controller_log_level: 4

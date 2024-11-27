@@ -92,10 +92,11 @@ func (alloc *Action) Name() string {
 func (alloc *Action) Initialize() {}
 
 // volcano v1.10 updates action struct
-func (alloc *Action) parseArguments(ssn *framework.Session) {
-	arguments := framework.GetArgOfActionFromConf(ssn.Configurations, alloc.Name())
-	arguments.GetBool(&alloc.enablePredicateErrorCache, conf.EnablePredicateErrCacheKey)
-}
+// requires importing conf, omitted
+// func (alloc *Action) parseArguments(ssn *framework.Session) {
+// 	arguments := framework.GetArgOfActionFromConf(ssn.Configurations, alloc.Name())
+// 	arguments.GetBool(&alloc.enablePredicateErrorCache, conf.EnablePredicateErrCacheKey)
+// }
 
 // Custom execute function for p3k8s
 // Authors: Tianya Chen, Baljit Singh
@@ -104,7 +105,7 @@ func (alloc *Action) Execute(ssn *framework.Session) {
 	defer klog.V(3).Infof("Leaving Allocate ...")
 
 	// parse config, populates the Action struct
-	alloc.parseArguments(ssn)
+	// alloc.parseArguments(ssn)
 	alloc.session = ssn
 
 	// Load configuration of policy

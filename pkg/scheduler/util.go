@@ -31,18 +31,15 @@ import (
 )
 
 var DefaultSchedulerConf = `
-actions: "enqueue, allocate, backfill"
+actions: "allocate"
 tiers:
 - plugins:
   - name: priority
   - name: gang
-  - name: conformance
 - plugins:
-  - name: overcommit
   - name: drf
   - name: predicates
   - name: proportion
-  - name: nodeorder
 `
 
 func UnmarshalSchedulerConf(confStr string) ([]framework.Action, []conf.Tier, []conf.Configuration, map[string]string, error) {

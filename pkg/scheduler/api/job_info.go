@@ -370,6 +370,15 @@ type JobInfo struct {
 	// * value means workload can use all the revocable node for during node active revocable time.
 	RevocableZone string
 	Budget        *DisruptionBudget
+
+	// CMU719 p3 custom properties
+	// Author: Tianya Chen
+	ID           int
+	Trace        string
+	Type         string
+	FastDuration int
+	SlowDuration int
+	CreationTime metav1.Time
 }
 
 // NewJobInfo creates a new jobInfo for set of tasks

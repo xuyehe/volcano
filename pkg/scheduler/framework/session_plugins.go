@@ -521,21 +521,23 @@ func (ssn *Session) ReservedNodes() {
 
 // JobOrderFn invoke joborder function of the plugins
 func (ssn *Session) JobOrderFn(l, r interface{}) bool {
-	for _, tier := range ssn.Tiers {
-		for _, plugin := range tier.Plugins {
-			if !isEnabled(plugin.EnabledJobOrder) {
-				continue
-			}
-			jof, found := ssn.jobOrderFns[plugin.Name]
-			if !found {
-				continue
-			}
-			if j := jof(l, r); j != 0 {
-				return j < 0
+	// changes specific to p3k8s --> only order based on creation time,UID
+	/*
+		for _, tier := range ssn.Tiers {
+			for _, plugin := range tier.Plugins {
+				if !isEnabled(plugin.EnabledJobOrder) {
+					continue
+				}
+				jof, found := ssn.jobOrderFns[plugin.Name]
+				if !found {
+					continue
+				}
+				if j := jof(l, r); j != 0 {
+					return j < 0
+				}
 			}
 		}
-	}
-
+	*/
 	// If no job order funcs, order job by CreationTimestamp first, then by UID.
 	lv := l.(*api.JobInfo)
 	rv := r.(*api.JobInfo)
